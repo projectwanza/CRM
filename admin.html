@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root{
       --primary:#101828; --primary-accent:#2952e3; --primary-light:#eef2ff;
@@ -1498,6 +1499,7 @@ function renderAllTransactionsAdmin(){
       '<button class="btn btn-ghost" onclick="openManageExpensesModal()">Manage Expenses</button>' +
       '<button class="btn btn-ghost" onclick="openPayoutModal()">+ Payout</button>' +
       '<button class="btn btn-ghost" onclick="openManagePayoutsModal()">Manage Payouts</button>' +
+      '<button class="btn btn-ghost" onclick="openDueBillsModal()">📋 Due Bills</button>' +
     '</div>' +
     '<div class="stat-grid" id="allTxnPlTotals"></div>' +
     '<div class="card"><div class="table-scroll tall"><table><thead><tr>' +
@@ -3468,6 +3470,181 @@ function exportPayoutGroupItemsCsv(key){
 /* ================= MANAGE EXPENSES (Applied) - bulk view/remove ================= */
 
 let MANAGE_EXP_CACHE = [];
+
+/* ==================== Due Bills / Outstanding Receivables ==================== */
+let DUE_BILLS_CACHE = { bills: [], customerSummary: [], totals: {} };
+const DUE_BILLS_HEADERS_ = ['Customer Name','Bill No.','Bill Date','Bill Amount','Paid Amount','Due Amount','Payment Status','Description'];
+const DUE_BILLS_SUMMARY_HEADERS_ = ['Customer Name','Total Due Bills','Total Outstanding Amount'];
+
+function openDueBillsModal(){
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:960px">' +
+      '<div class="modal-head"><h3>📋 Due Bills / Outstanding Receivables</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<div class="stat-grid" id="dbTotals"></div>' +
+        '<div style="margin:12px 0;">' +
+          '<h4 style="margin:0 0 8px;font-size:13px;">Customer-wise Summary <span style="font-weight:400;color:var(--text-3)">(click a row to filter below)</span></h4>' +
+          '<div class="table-scroll" style="max-height:160px" id="dbCustomerSummary"><div class="skeleton"></div></div>' +
+        '</div>' +
+        '<div class="filters-bar" style="margin-bottom:10px;">' +
+          '<input type="text" id="dbSearchCustomer" placeholder="Search customer..." oninput="paintDueBillsList()">' +
+          '<input type="text" id="dbSearchBillNo" placeholder="Bill / Invoice No." oninput="paintDueBillsList()">' +
+          '<input type="date" id="dbFrom" onchange="paintDueBillsList()">' +
+          '<input type="date" id="dbTo" onchange="paintDueBillsList()">' +
+          '<select id="dbStatus" onchange="paintDueBillsList()"><option value="">All Payment Status</option><option value="Unpaid">🔴 Unpaid</option><option value="Partially Paid">🟡 Partially Paid</option></select>' +
+          '<select id="dbCustomerFilter" onchange="paintDueBillsList()"><option value="">All Customers</option></select>' +
+          '<select id="dbSort" onchange="paintDueBillsList()"><option value="date_desc">Sort: Date (Newest)</option><option value="date_asc">Sort: Date (Oldest)</option><option value="due_desc">Sort: Due Amount (High-Low)</option><option value="due_asc">Sort: Due Amount (Low-High)</option></select>' +
+          '<button class="btn btn-ghost" onclick="resetDueBillsFilters()">Reset</button>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
+          '<button class="btn btn-ghost" onclick="exportDueBillsCsv()">⬇ Export CSV</button>' +
+          '<button class="btn btn-ghost" onclick="exportDueBillsXlsx()">⬇ Export Excel (.xlsx)</button>' +
+        '</div>' +
+        '<div class="table-scroll" style="max-height:380px" id="dbList"><div class="skeleton"></div></div>' +
+      '</div>' +
+    '</div></div>';
+  loadDueBills();
+}
+
+function loadDueBills(){
+  q('#dbList').innerHTML = '<div class="skeleton"></div>';
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res || !res.success){ q('#dbList').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; return; }
+      DUE_BILLS_CACHE = res;
+      paintDueBillTotals_();
+      paintDueBillCustomerSummary_();
+      paintDueBillFilterOptions_();
+      paintDueBillsList();
+    })
+    .withFailureHandler(function(){ q('#dbList').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; })
+    .apiAdminGetDueBills(ATOKEN);
+}
+
+function paintDueBillTotals_(){
+  const el = q('#dbTotals');
+  if(!el) return;
+  const t = DUE_BILLS_CACHE.totals || {};
+  el.innerHTML = stat('Total Due Bills', t.totalDueBills||0) +
+    stat('Total Outstanding Amount', money(t.totalOutstanding||0)) +
+    stat('Total Customers with Due', t.totalCustomersWithDue||0) +
+    stat('Total Paid Amount', money(t.totalPaidAmount||0));
+}
+
+function paintDueBillCustomerSummary_(){
+  const host = q('#dbCustomerSummary');
+  if(!host) return;
+  const list = DUE_BILLS_CACHE.customerSummary || [];
+  if(!list.length){ host.innerHTML = '<div class="empty-state">No outstanding dues 🎉</div>'; return; }
+  host.innerHTML = '<table><thead><tr><th>Customer</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
+    list.map(function(c){
+      return '<tr style="cursor:pointer" onclick="q(\'#dbCustomerFilter\').value=\''+esc(c.customerId)+'\'; paintDueBillsList();">' +
+        '<td>'+esc(c.customerName)+'</td><td>'+c.billCount+'</td><td style="font-weight:700;color:#c0392b">'+money(c.totalDue)+'</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+function paintDueBillFilterOptions_(){
+  const sel = q('#dbCustomerFilter');
+  if(!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All Customers</option>' + (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){
+    return '<option value="'+esc(c.customerId)+'">'+esc(c.customerName)+' ('+money(c.totalDue)+')</option>';
+  }).join('');
+  sel.value = current;
+}
+
+// Shared - used by BOTH the on-screen list and the exports, so exported
+// files always match exactly what's currently visible/filtered on screen.
+function getFilteredDueBills_(){
+  const custTerm = (q('#dbSearchCustomer')?q('#dbSearchCustomer').value:'').toLowerCase();
+  const billTerm = (q('#dbSearchBillNo')?q('#dbSearchBillNo').value:'').toLowerCase();
+  const from = q('#dbFrom')?q('#dbFrom').value:'';
+  const to = q('#dbTo')?q('#dbTo').value:'';
+  const fromTime = from ? new Date(from).getTime() : null;
+  const toTime = to ? (new Date(to).getTime() + 24*60*60*1000 - 1) : null;
+  const status = q('#dbStatus')?q('#dbStatus').value:'';
+  const customerId = q('#dbCustomerFilter')?q('#dbCustomerFilter').value:'';
+  const sort = q('#dbSort')?q('#dbSort').value:'date_desc';
+
+  let list = (DUE_BILLS_CACHE.bills||[]).filter(function(b){
+    if(custTerm && String(b.customerName||'').toLowerCase().indexOf(custTerm)===-1) return false;
+    if(billTerm && String(b.refNo||'').toLowerCase().indexOf(billTerm)===-1) return false;
+    if(fromTime && (!b.dateRaw || b.dateRaw < fromTime)) return false;
+    if(toTime && (!b.dateRaw || b.dateRaw > toTime)) return false;
+    if(status && b.paymentStatus !== status) return false;
+    if(customerId && String(b.customerId||'') !== customerId) return false;
+    return true;
+  });
+
+  list = list.slice().sort(function(a,b){
+    if(sort==='date_asc') return (a.dateRaw||0)-(b.dateRaw||0);
+    if(sort==='due_desc') return (b.dueAmount||0)-(a.dueAmount||0);
+    if(sort==='due_asc') return (a.dueAmount||0)-(b.dueAmount||0);
+    return (b.dateRaw||0)-(a.dateRaw||0); // date_desc default
+  });
+  return list;
+}
+
+function paintDueBillsList(){
+  const host = q('#dbList');
+  if(!host) return;
+  const list = getFilteredDueBills_();
+  if(!list.length){ host.innerHTML = '<div class="empty-state">No matching due bills.</div>'; return; }
+  host.innerHTML = '<table><thead><tr><th>Customer Name</th><th>Bill No.</th><th>Bill Date</th><th>Bill Amount</th><th>Paid</th><th>Due</th><th>Payment Status</th><th>Description</th></tr></thead><tbody>' +
+    list.map(function(b){
+      const statusColor = b.paymentStatus==='Unpaid' ? '#c0392b' : '#d68910';
+      return '<tr><td>'+esc(b.customerName)+'</td><td>#'+esc(b.refNo)+'</td><td>'+esc(b.date)+'</td>' +
+        '<td>'+money(b.billAmount)+'</td><td>'+money(b.paidAmount)+'</td>' +
+        '<td style="font-weight:700;color:'+statusColor+'">'+money(b.dueAmount)+'</td>' +
+        '<td><span style="color:'+statusColor+';font-weight:600;">'+esc((b.paymentStatusEmoji||'')+' '+b.paymentStatus)+'</span></td>' +
+        '<td>'+esc(b.description||'—')+'</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+function resetDueBillsFilters(){
+  q('#dbSearchCustomer').value = '';
+  q('#dbSearchBillNo').value = '';
+  q('#dbFrom').value = '';
+  q('#dbTo').value = '';
+  q('#dbStatus').value = '';
+  q('#dbCustomerFilter').value = '';
+  q('#dbSort').value = 'date_desc';
+  paintDueBillsList();
+}
+
+// NEW: generic multi-sheet Excel (.xlsx) writer, built on the SheetJS
+// library loaded in <head>. sheets = [{name, headers, rows}, ...].
+function downloadXlsx_(filename, sheets){
+  if(typeof XLSX === 'undefined'){ showToast('Excel export library failed to load - check your internet connection.', 'err'); return; }
+  const wb = XLSX.utils.book_new();
+  sheets.forEach(function(s){
+    const ws = XLSX.utils.aoa_to_sheet([s.headers].concat(s.rows));
+    XLSX.utils.book_append_sheet(wb, ws, s.name.substring(0,31)); // Excel sheet-name limit
+  });
+  XLSX.writeFile(wb, filename);
+}
+
+function dueBillsRowsForExport_(){
+  return getFilteredDueBills_().map(function(b){
+    return [b.customerName, b.refNo, b.date, b.billAmount, b.paidAmount, b.dueAmount, b.paymentStatus, b.description||''];
+  });
+}
+function dueBillsSummaryRowsForExport_(){
+  return (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){ return [c.customerName, c.billCount, c.totalDue]; });
+}
+
+function exportDueBillsCsv(){
+  downloadCsv_('Due_Bills.csv', DUE_BILLS_HEADERS_, dueBillsRowsForExport_());
+  downloadCsv_('Due_Bills_Customer_Summary.csv', DUE_BILLS_SUMMARY_HEADERS_, dueBillsSummaryRowsForExport_());
+}
+function exportDueBillsXlsx(){
+  downloadXlsx_('Due_Bills.xlsx', [
+    { name: 'Due Bills', headers: DUE_BILLS_HEADERS_, rows: dueBillsRowsForExport_() },
+    { name: 'Customer Summary', headers: DUE_BILLS_SUMMARY_HEADERS_, rows: dueBillsSummaryRowsForExport_() }
+  ]);
+}
+/* ==================== /Due Bills ==================== */
+
 
 function openManageExpensesModal(){
   q('#modalHost').innerHTML =
