@@ -3493,9 +3493,13 @@ function openDueBillsModal(){
           '<input type="date" id="dbFrom" onchange="paintDueBillCustomerSummary_()">' +
           '<input type="date" id="dbTo" onchange="paintDueBillCustomerSummary_()">' +
           '<select id="dbStatus" onchange="paintDueBillCustomerSummary_()"><option value="">All Payment Status</option><option value="Unpaid">🔴 Unpaid</option><option value="Partially Paid">🟡 Partially Paid</option></select>' +
-          '<select id="dbCustomerFilter" onchange="paintDueBillCustomerSummary_()"><option value="">All Customers</option></select>' +
+          '<select id="dbSalesperson" onchange="paintDueBillCustomerSummary_()"><option value="">All Salespersons</option></select>' +
           '<select id="dbSort" onchange="paintDueBillCustomerSummary_()"><option value="date_desc">Sort: Date (Newest)</option><option value="date_asc">Sort: Date (Oldest)</option><option value="due_desc">Sort: Due Amount (High-Low)</option><option value="due_asc">Sort: Due Amount (Low-High)</option></select>' +
           '<button class="btn btn-ghost" onclick="resetDueBillsFilters()">Reset</button>' +
+        '</div>' +
+        '<div style="margin-bottom:10px;">' +
+          '<label style="display:block;font-size:12px;color:var(--text-3);margin-bottom:4px;">Filter by Customer <span style="font-weight:400">(Ctrl/Cmd+click or drag to select multiple)</span></label>' +
+          '<select id="dbCustomerFilter" multiple size="5" style="width:100%;" onchange="paintDueBillCustomerSummary_()"></select>' +
         '</div>' +
         '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
           '<button class="btn btn-ghost" onclick="exportDueBillsCsv()">⬇ Export CSV</button>' +
@@ -3532,12 +3536,25 @@ function paintDueBillTotals_(){
 
 function paintDueBillFilterOptions_(){
   const sel = q('#dbCustomerFilter');
-  if(!sel) return;
-  const current = sel.value;
-  sel.innerHTML = '<option value="">All Customers</option>' + (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){
-    return '<option value="'+esc(dueBillGroupKey_(c.customerId, c.customerName))+'">'+esc(c.customerName)+' ('+money(c.totalDue)+')</option>';
-  }).join('');
-  sel.value = current;
+  if(sel){
+    const currentSelected = Array.from(sel.selectedOptions||[]).map(function(o){ return o.value; });
+    sel.innerHTML = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){
+      return '<option value="'+esc(dueBillGroupKey_(c.customerId, c.customerName))+'">'+esc(c.customerName)+' ('+money(c.totalDue)+')</option>';
+    }).join('');
+    Array.from(sel.options).forEach(function(o){ if(currentSelected.indexOf(o.value)!==-1) o.selected = true; });
+  }
+
+  // NEW: salesperson dropdown, built from whichever salespersons actually
+  // appear on the due bills currently loaded.
+  const spSel = q('#dbSalesperson');
+  if(spSel){
+    const currentSp = spSel.value;
+    const names = Array.from(new Set((DUE_BILLS_CACHE.bills||[]).map(function(b){ return b.salesperson||''; }).filter(function(n){ return n; }))).sort();
+    spSel.innerHTML = '<option value="">All Salespersons</option>' +
+      '<option value="__UNASSIGNED__">Unassigned</option>' +
+      names.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join('');
+    spSel.value = currentSp;
+  }
 }
 
 // Shared - used by the accordion AND the exports, so exported
@@ -3550,7 +3567,9 @@ function getFilteredDueBills_(){
   const fromTime = from ? new Date(from).getTime() : null;
   const toTime = to ? (new Date(to).getTime() + 24*60*60*1000 - 1) : null;
   const status = q('#dbStatus')?q('#dbStatus').value:'';
-  const customerKey = q('#dbCustomerFilter')?q('#dbCustomerFilter').value:'';
+  const customerKeysEl = q('#dbCustomerFilter');
+  const customerKeys = customerKeysEl ? Array.from(customerKeysEl.selectedOptions||[]).map(function(o){ return o.value; }) : [];
+  const salesperson = q('#dbSalesperson')?q('#dbSalesperson').value:''; // NEW
   const sort = q('#dbSort')?q('#dbSort').value:'date_desc';
 
   let list = (DUE_BILLS_CACHE.bills||[]).filter(function(b){
@@ -3559,7 +3578,9 @@ function getFilteredDueBills_(){
     if(fromTime && (!b.dateRaw || b.dateRaw < fromTime)) return false;
     if(toTime && (!b.dateRaw || b.dateRaw > toTime)) return false;
     if(status && b.paymentStatus !== status) return false;
-    if(customerKey && dueBillGroupKey_(b.customerId, b.customerName) !== customerKey) return false;
+    if(customerKeys.length && customerKeys.indexOf(dueBillGroupKey_(b.customerId, b.customerName))===-1) return false;
+    if(salesperson === '__UNASSIGNED__' && b.salesperson) return false;   // NEW
+    if(salesperson && salesperson !== '__UNASSIGNED__' && b.salesperson !== salesperson) return false; // NEW
     return true;
   });
 
@@ -3648,7 +3669,8 @@ function resetDueBillsFilters(){
   q('#dbFrom').value = '';
   q('#dbTo').value = '';
   q('#dbStatus').value = '';
-  q('#dbCustomerFilter').value = '';
+  Array.from(q('#dbCustomerFilter').options).forEach(function(o){ o.selected = false; }); // NEW: clear multi-select
+  q('#dbSalesperson').value = ''; // NEW
   q('#dbSort').value = 'date_desc';
   paintDueBillCustomerSummary_();
 }
