@@ -3498,8 +3498,18 @@ function openDueBillsModal(){
           '<button class="btn btn-ghost" onclick="resetDueBillsFilters()">Reset</button>' +
         '</div>' +
         '<div style="margin-bottom:10px;">' +
-          '<label style="display:block;font-size:12px;color:var(--text-3);margin-bottom:4px;">Filter by Customer <span style="font-weight:400">(Ctrl/Cmd+click or drag to select multiple)</span></label>' +
-          '<select id="dbCustomerFilter" multiple size="5" style="width:100%;" onchange="paintDueBillCustomerSummary_()"></select>' +
+          '<label style="display:block;font-size:12px;color:var(--text-3);margin-bottom:4px;">Filter by Customer</label>' +
+          '<div style="position:relative;">' +
+            '<button type="button" class="btn btn-ghost" id="dbCustomerFilterBtn" onclick="toggleDbCustomerDropdown_()" style="width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;">' +
+              '<span id="dbCustomerFilterLabel">All Customers</span><span>&#9662;</span>' +
+            '</button>' +
+            '<div id="dbCustomerFilterPanel" class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md);z-index:30;max-height:260px;overflow-y:auto;padding:6px 0;">' +
+              '<label style="display:block;padding:7px 14px;cursor:pointer;font-weight:600;border-bottom:1px solid var(--border);">' +
+                '<input type="checkbox" id="dbCustomerFilterAllCb" checked onchange="toggleDbCustomerFilterAll_(this.checked)"> All Customers' +
+              '</label>' +
+              '<div id="dbCustomerFilterList"></div>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
         '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
           '<button class="btn btn-ghost" onclick="exportDueBillsCsv()">⬇ Export CSV</button>' +
@@ -3535,13 +3545,17 @@ function paintDueBillTotals_(){
 }
 
 function paintDueBillFilterOptions_(){
-  const sel = q('#dbCustomerFilter');
-  if(sel){
-    const currentSelected = Array.from(sel.selectedOptions||[]).map(function(o){ return o.value; });
-    sel.innerHTML = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){
-      return '<option value="'+esc(dueBillGroupKey_(c.customerId, c.customerName))+'">'+esc(c.customerName)+' ('+money(c.totalDue)+')</option>';
+  const list = q('#dbCustomerFilterList');
+  if(list){
+    const currentSelected = Array.from(document.querySelectorAll('.dbCustCb:checked')).map(function(cb){ return cb.value; });
+    list.innerHTML = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){
+      const key = dueBillGroupKey_(c.customerId, c.customerName);
+      const checked = currentSelected.indexOf(key)!==-1 ? ' checked' : '';
+      return '<label style="display:block;padding:6px 14px;cursor:pointer;">' +
+        '<input type="checkbox" class="dbCustCb" value="'+esc(key)+'"'+checked+' onchange="onDbCustomerFilterChange_()"> '+esc(c.customerName)+' ('+money(c.totalDue)+')' +
+      '</label>';
     }).join('');
-    Array.from(sel.options).forEach(function(o){ if(currentSelected.indexOf(o.value)!==-1) o.selected = true; });
+    updateDbCustomerFilterLabel_();
   }
 
   // NEW: salesperson dropdown, built from whichever salespersons actually
@@ -3557,6 +3571,40 @@ function paintDueBillFilterOptions_(){
   }
 }
 
+// NEW: opens/closes the "Filter by Customer" checkbox dropdown panel.
+function toggleDbCustomerDropdown_(){
+  const p = q('#dbCustomerFilterPanel');
+  if(p) p.classList.toggle('hidden');
+}
+
+// NEW: "All Customers" checked = no filter applied. Checking it clears
+// every individual pick.
+function toggleDbCustomerFilterAll_(checked){
+  if(checked){
+    Array.from(document.querySelectorAll('.dbCustCb:checked')).forEach(function(cb){ cb.checked = false; });
+  }
+  updateDbCustomerFilterLabel_();
+  paintDueBillCustomerSummary_();
+}
+
+// NEW: ticking/unticking any individual customer keeps "All Customers"
+// checkbox in sync automatically.
+function onDbCustomerFilterChange_(){
+  const anyChecked = document.querySelectorAll('.dbCustCb:checked').length > 0;
+  const allCb = q('#dbCustomerFilterAllCb');
+  if(allCb) allCb.checked = !anyChecked;
+  updateDbCustomerFilterLabel_();
+  paintDueBillCustomerSummary_();
+}
+
+// NEW: keeps the dropdown button's label in sync ("All Customers" vs "N selected").
+function updateDbCustomerFilterLabel_(){
+  const lbl = q('#dbCustomerFilterLabel');
+  if(!lbl) return;
+  const n = document.querySelectorAll('.dbCustCb:checked').length;
+  lbl.textContent = n ? (n + ' customer' + (n>1?'s':'') + ' selected') : 'All Customers';
+}
+
 // Shared - used by the accordion AND the exports, so exported
 // files always match exactly what's currently visible/filtered on screen.
 function getFilteredDueBills_(){
@@ -3567,8 +3615,7 @@ function getFilteredDueBills_(){
   const fromTime = from ? new Date(from).getTime() : null;
   const toTime = to ? (new Date(to).getTime() + 24*60*60*1000 - 1) : null;
   const status = q('#dbStatus')?q('#dbStatus').value:'';
-  const customerKeysEl = q('#dbCustomerFilter');
-  const customerKeys = customerKeysEl ? Array.from(customerKeysEl.selectedOptions||[]).map(function(o){ return o.value; }) : [];
+  const customerKeys = Array.from(document.querySelectorAll('.dbCustCb:checked')).map(function(cb){ return cb.value; });
   const salesperson = q('#dbSalesperson')?q('#dbSalesperson').value:''; // NEW
   const sort = q('#dbSort')?q('#dbSort').value:'date_desc';
 
@@ -3611,7 +3658,7 @@ function groupFilteredDueBillsByCustomer_(){
   filtered.forEach(function(b){
     const key = dueBillGroupKey_(b.customerId, b.customerName);
     if(!map[key]){
-      map[key] = { key: key, customerId: b.customerId||'', customerName: b.customerName, bills: [], totalDue: 0 };
+      map[key] = { key: key, customerId: b.customerId||'', customerName: b.customerName, salesperson: b.salesperson||'', bills: [], totalDue: 0 }; // NEW: salesperson
       seenOrder.push(key);
     }
     map[key].bills.push(b);
@@ -3631,16 +3678,16 @@ function paintDueBillCustomerSummary_(){
   if(!host) return;
   const groups = groupFilteredDueBillsByCustomer_();
   if(!groups.length){ host.innerHTML = '<div class="empty-state">No matching due bills.</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th style="width:22px"></th><th>Customer</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
+  host.innerHTML = '<table><thead><tr><th style="width:22px"></th><th>Customer</th><th>Salesperson</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
     groups.map(function(c){
       const cidAttr = esc(c.key);
       const isOpen = DUE_BILLS_EXPANDED_.has(c.key);
       const arrow = isOpen ? '▼' : '▶';
       let block = '<tr style="cursor:pointer" onclick="toggleDueBillCustomer_(\''+cidAttr+'\')">' +
-        '<td>'+arrow+'</td><td>'+esc(c.customerName)+'</td><td>'+c.bills.length+'</td>' +
+        '<td>'+arrow+'</td><td>'+esc(c.customerName)+'</td><td>'+esc(c.salesperson||'—')+'</td><td>'+c.bills.length+'</td>' +
         '<td style="font-weight:700;color:#c0392b">'+money(c.totalDue)+'</td></tr>';
       if(isOpen){
-        block += '<tr><td></td><td colspan="3" style="padding:4px 0 10px;">' +
+        block += '<tr><td></td><td colspan="4" style="padding:4px 0 10px;">' +
           '<table><thead><tr><th>Bill No.</th><th>Bill Date</th><th>Bill Amount</th><th>Paid</th><th>Due</th><th>Status</th><th>Description</th></tr></thead><tbody>' +
           c.bills.map(function(b){
             const statusColor = b.paymentStatus==='Unpaid' ? '#c0392b' : '#d68910';
@@ -3669,7 +3716,10 @@ function resetDueBillsFilters(){
   q('#dbFrom').value = '';
   q('#dbTo').value = '';
   q('#dbStatus').value = '';
-  Array.from(q('#dbCustomerFilter').options).forEach(function(o){ o.selected = false; }); // NEW: clear multi-select
+  Array.from(document.querySelectorAll('.dbCustCb:checked')).forEach(function(cb){ cb.checked = false; }); // clear individual picks
+  const dbAllCb = q('#dbCustomerFilterAllCb'); if(dbAllCb) dbAllCb.checked = true; // back to "All Customers"
+  updateDbCustomerFilterLabel_();
+  const dbPanel = q('#dbCustomerFilterPanel'); if(dbPanel) dbPanel.classList.add('hidden'); // collapse dropdown
   q('#dbSalesperson').value = ''; // NEW
   q('#dbSort').value = 'date_desc';
   paintDueBillCustomerSummary_();
@@ -3696,6 +3746,7 @@ function dueBillsGroupedRowsForExport_(){
   groups.forEach(function(c, idx){
     if(idx>0) rows.push([]);
     rows.push(['Customer:', c.customerName]);
+    rows.push(['Salesperson:', c.salesperson||'']); // NEW
     rows.push(['Total Due:', c.totalDue]);
     rows.push(DUE_BILLS_BILL_HEADERS_.slice());
     c.bills.forEach(function(b){
