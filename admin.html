@@ -3503,11 +3503,16 @@ function openDueBillsModal(){
             '<button type="button" class="btn btn-ghost" id="dbCustomerFilterBtn" onclick="toggleDbCustomerDropdown_()" style="width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;">' +
               '<span id="dbCustomerFilterLabel">All Customers</span><span>&#9662;</span>' +
             '</button>' +
-            '<div id="dbCustomerFilterPanel" class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md);z-index:30;max-height:260px;overflow-y:auto;padding:6px 0;">' +
-              '<label style="display:block;padding:7px 14px;cursor:pointer;font-weight:600;border-bottom:1px solid var(--border);">' +
-                '<input type="checkbox" id="dbCustomerFilterAllCb" checked onchange="toggleDbCustomerFilterAll_(this.checked)"> All Customers' +
-              '</label>' +
-              '<div id="dbCustomerFilterList"></div>' +
+            '<div id="dbCustomerFilterPanel" class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md);z-index:30;max-height:300px;display:flex;flex-direction:column;">' +
+              '<div style="padding:8px;border-bottom:1px solid var(--border);">' +
+                '<input type="text" id="dbCustomerFilterSearch" placeholder="Search customer..." style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;" oninput="filterDbCustomerFilterList_()">' +
+              '</div>' +
+              '<div style="overflow-y:auto;">' +
+                '<label style="display:block;padding:7px 14px;cursor:pointer;font-weight:600;border-bottom:1px solid var(--border);">' +
+                  '<input type="checkbox" id="dbCustomerFilterAllCb" checked onchange="toggleDbCustomerFilterAll_(this.checked)"> All Customers' +
+                '</label>' +
+                '<div id="dbCustomerFilterList"></div>' +
+              '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -3526,12 +3531,47 @@ function loadDueBills(){
     .withSuccessHandler(function(res){
       if(!res || !res.success){ q('#dbCustomerSummary').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; return; }
       DUE_BILLS_CACHE = res;
-      paintDueBillTotals_();
-      paintDueBillFilterOptions_();
-      paintDueBillCustomerSummary_();
+      // NEW: guarantee CUSTOMER_CACHE (Customers page data - the reliable
+      // source of truth for salesperson) is loaded, then re-stamp every
+      // due bill's salesperson from it. Fixes bills whose salesperson came
+      // back blank from the server-side customerId join.
+      ensureCustomerCacheThen_(function(){
+        enrichDueBillsWithSalesperson_();
+        paintDueBillTotals_();
+        paintDueBillFilterOptions_();
+        paintDueBillCustomerSummary_();
+      });
     })
     .withFailureHandler(function(){ q('#dbCustomerSummary').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; })
     .apiAdminGetDueBills(ATOKEN);
+}
+
+// NEW: some due bills' customerId doesn't cleanly match the Customers
+// sheet's Customer ID (legacy/alternate party-name formats on old rows),
+// so the server's per-bill salesperson can come back blank even though
+// that customer clearly has one assigned on the Customers page. This
+// re-stamps every bill (and the customer summary) from CUSTOMER_CACHE -
+// the exact same data source the Customers page itself uses - matching
+// by Customer ID first, falling back to an exact customer-name match.
+function enrichDueBillsWithSalesperson_(){
+  const byId = {}, byName = {};
+  (CUSTOMER_CACHE||[]).forEach(function(c){
+    const sp = c.salesperson || '';
+    if(!sp) return;
+    if(c.customerId) byId[String(c.customerId).toUpperCase()] = sp;
+    if(c.customerName) byName[String(c.customerName).toUpperCase()] = sp;
+  });
+  function lookup(customerId, customerName){
+    return (customerId && byId[String(customerId).toUpperCase()])
+      || (customerName && byName[String(customerName).toUpperCase()])
+      || '';
+  }
+  (DUE_BILLS_CACHE.bills||[]).forEach(function(b){
+    if(!b.salesperson) b.salesperson = lookup(b.customerId, b.customerName);
+  });
+  (DUE_BILLS_CACHE.customerSummary||[]).forEach(function(c){
+    if(!c.salesperson) c.salesperson = lookup(c.customerId, c.customerName);
+  });
 }
 
 function paintDueBillTotals_(){
@@ -3551,7 +3591,7 @@ function paintDueBillFilterOptions_(){
     list.innerHTML = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){
       const key = dueBillGroupKey_(c.customerId, c.customerName);
       const checked = currentSelected.indexOf(key)!==-1 ? ' checked' : '';
-      return '<label style="display:block;padding:6px 14px;cursor:pointer;">' +
+      return '<label class="dbCustFilterRow" data-name="'+esc(String(c.customerName||'').toLowerCase())+'" style="display:block;padding:6px 14px;cursor:pointer;">' +
         '<input type="checkbox" class="dbCustCb" value="'+esc(key)+'"'+checked+' onchange="onDbCustomerFilterChange_()"> '+esc(c.customerName)+' ('+money(c.totalDue)+')' +
       '</label>';
     }).join('');
@@ -3575,6 +3615,14 @@ function paintDueBillFilterOptions_(){
 function toggleDbCustomerDropdown_(){
   const p = q('#dbCustomerFilterPanel');
   if(p) p.classList.toggle('hidden');
+}
+
+// NEW: live-filters the "Filter by Customer" checkbox list as you type.
+function filterDbCustomerFilterList_(){
+  const term = (q('#dbCustomerFilterSearch')?q('#dbCustomerFilterSearch').value:'').toLowerCase();
+  Array.from(document.querySelectorAll('.dbCustFilterRow')).forEach(function(row){
+    row.style.display = (!term || row.getAttribute('data-name').indexOf(term)!==-1) ? '' : 'none';
+  });
 }
 
 // NEW: "All Customers" checked = no filter applied. Checking it clears
@@ -3658,11 +3706,12 @@ function groupFilteredDueBillsByCustomer_(){
   filtered.forEach(function(b){
     const key = dueBillGroupKey_(b.customerId, b.customerName);
     if(!map[key]){
-      map[key] = { key: key, customerId: b.customerId||'', customerName: b.customerName, salesperson: b.salesperson||'', bills: [], totalDue: 0 }; // NEW: salesperson
+      map[key] = { key: key, customerId: b.customerId||'', customerName: b.customerName, salesperson: b.salesperson||'', bills: [], totalDue: 0, lastBillDate: '', lastBillDateRaw: 0 }; // NEW: salesperson, lastBillDate
       seenOrder.push(key);
     }
     map[key].bills.push(b);
     map[key].totalDue += (b.dueAmount||0);
+    if((b.dateRaw||0) >= map[key].lastBillDateRaw){ map[key].lastBillDateRaw = b.dateRaw||0; map[key].lastBillDate = b.date; } // NEW: latest due bill's date
   });
   const summaryOrder = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){ return dueBillGroupKey_(c.customerId, c.customerName); });
   const order = summaryOrder.filter(function(key){ return map[key]; });
@@ -3678,16 +3727,16 @@ function paintDueBillCustomerSummary_(){
   if(!host) return;
   const groups = groupFilteredDueBillsByCustomer_();
   if(!groups.length){ host.innerHTML = '<div class="empty-state">No matching due bills.</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th style="width:22px"></th><th>Customer</th><th>Salesperson</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
+  host.innerHTML = '<table><thead><tr><th style="width:22px"></th><th>Customer</th><th>Salesperson</th><th>Last Bill Date</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
     groups.map(function(c){
       const cidAttr = esc(c.key);
       const isOpen = DUE_BILLS_EXPANDED_.has(c.key);
       const arrow = isOpen ? '▼' : '▶';
       let block = '<tr style="cursor:pointer" onclick="toggleDueBillCustomer_(\''+cidAttr+'\')">' +
-        '<td>'+arrow+'</td><td>'+esc(c.customerName)+'</td><td>'+esc(c.salesperson||'—')+'</td><td>'+c.bills.length+'</td>' +
+        '<td>'+arrow+'</td><td>'+esc(c.customerName)+'</td><td>'+esc(c.salesperson||'—')+'</td><td>'+esc(c.lastBillDate||'—')+'</td><td>'+c.bills.length+'</td>' +
         '<td style="font-weight:700;color:#c0392b">'+money(c.totalDue)+'</td></tr>';
       if(isOpen){
-        block += '<tr><td></td><td colspan="4" style="padding:4px 0 10px;">' +
+        block += '<tr><td></td><td colspan="5" style="padding:4px 0 10px;">' +
           '<table><thead><tr><th>Bill No.</th><th>Bill Date</th><th>Bill Amount</th><th>Paid</th><th>Due</th><th>Status</th><th>Description</th></tr></thead><tbody>' +
           c.bills.map(function(b){
             const statusColor = b.paymentStatus==='Unpaid' ? '#c0392b' : '#d68910';
@@ -3720,6 +3769,7 @@ function resetDueBillsFilters(){
   const dbAllCb = q('#dbCustomerFilterAllCb'); if(dbAllCb) dbAllCb.checked = true; // back to "All Customers"
   updateDbCustomerFilterLabel_();
   const dbPanel = q('#dbCustomerFilterPanel'); if(dbPanel) dbPanel.classList.add('hidden'); // collapse dropdown
+  const dbCustSearch = q('#dbCustomerFilterSearch'); if(dbCustSearch){ dbCustSearch.value=''; filterDbCustomerFilterList_(); } // NEW: clear search
   q('#dbSalesperson').value = ''; // NEW
   q('#dbSort').value = 'date_desc';
   paintDueBillCustomerSummary_();
@@ -3747,6 +3797,7 @@ function dueBillsGroupedRowsForExport_(){
     if(idx>0) rows.push([]);
     rows.push(['Customer:', c.customerName]);
     rows.push(['Salesperson:', c.salesperson||'']); // NEW
+    rows.push(['Last Bill Date:', c.lastBillDate||'']); // NEW
     rows.push(['Total Due:', c.totalDue]);
     rows.push(DUE_BILLS_BILL_HEADERS_.slice());
     c.bills.forEach(function(b){
