@@ -3473,51 +3473,50 @@ let MANAGE_EXP_CACHE = [];
 
 /* ==================== Due Bills / Outstanding Receivables ==================== */
 let DUE_BILLS_CACHE = { bills: [], customerSummary: [], totals: {} };
-const DUE_BILLS_HEADERS_ = ['Customer Name','Bill No.','Bill Date','Bill Amount','Paid Amount','Due Amount','Payment Status','Description'];
-const DUE_BILLS_SUMMARY_HEADERS_ = ['Customer Name','Total Due Bills','Total Outstanding Amount'];
+let DUE_BILLS_EXPANDED_ = new Set(); // NEW: which customerIds are expanded (accordion state)
+const DUE_BILLS_BILL_HEADERS_ = ['Bill No.','Bill Date','Bill Amount','Paid Amount','Due Amount','Payment Status','Description'];
 
 function openDueBillsModal(){
+  DUE_BILLS_EXPANDED_ = new Set(); // start fully collapsed every time the modal opens
   q('#modalHost').innerHTML =
     '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:960px">' +
       '<div class="modal-head"><h3>📋 Due Bills / Outstanding Receivables</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
       '<div class="modal-body">' +
         '<div class="stat-grid" id="dbTotals"></div>' +
         '<div style="margin:12px 0;">' +
-          '<h4 style="margin:0 0 8px;font-size:13px;">Customer-wise Summary <span style="font-weight:400;color:var(--text-3)">(click a row to filter below)</span></h4>' +
-          '<div class="table-scroll" style="max-height:160px" id="dbCustomerSummary"><div class="skeleton"></div></div>' +
+          '<h4 style="margin:0 0 8px;font-size:13px;">Customer-wise Summary <span style="font-weight:400;color:var(--text-3)">(click a row to expand)</span></h4>' +
+          '<div class="table-scroll" style="max-height:480px" id="dbCustomerSummary"><div class="skeleton"></div></div>' +
         '</div>' +
         '<div class="filters-bar" style="margin-bottom:10px;">' +
-          '<input type="text" id="dbSearchCustomer" placeholder="Search customer..." oninput="paintDueBillsList()">' +
-          '<input type="text" id="dbSearchBillNo" placeholder="Bill / Invoice No." oninput="paintDueBillsList()">' +
-          '<input type="date" id="dbFrom" onchange="paintDueBillsList()">' +
-          '<input type="date" id="dbTo" onchange="paintDueBillsList()">' +
-          '<select id="dbStatus" onchange="paintDueBillsList()"><option value="">All Payment Status</option><option value="Unpaid">🔴 Unpaid</option><option value="Partially Paid">🟡 Partially Paid</option></select>' +
-          '<select id="dbCustomerFilter" onchange="paintDueBillsList()"><option value="">All Customers</option></select>' +
-          '<select id="dbSort" onchange="paintDueBillsList()"><option value="date_desc">Sort: Date (Newest)</option><option value="date_asc">Sort: Date (Oldest)</option><option value="due_desc">Sort: Due Amount (High-Low)</option><option value="due_asc">Sort: Due Amount (Low-High)</option></select>' +
+          '<input type="text" id="dbSearchCustomer" placeholder="Search customer..." oninput="paintDueBillCustomerSummary_()">' +
+          '<input type="text" id="dbSearchBillNo" placeholder="Bill / Invoice No." oninput="paintDueBillCustomerSummary_()">' +
+          '<input type="date" id="dbFrom" onchange="paintDueBillCustomerSummary_()">' +
+          '<input type="date" id="dbTo" onchange="paintDueBillCustomerSummary_()">' +
+          '<select id="dbStatus" onchange="paintDueBillCustomerSummary_()"><option value="">All Payment Status</option><option value="Unpaid">🔴 Unpaid</option><option value="Partially Paid">🟡 Partially Paid</option></select>' +
+          '<select id="dbCustomerFilter" onchange="paintDueBillCustomerSummary_()"><option value="">All Customers</option></select>' +
+          '<select id="dbSort" onchange="paintDueBillCustomerSummary_()"><option value="date_desc">Sort: Date (Newest)</option><option value="date_asc">Sort: Date (Oldest)</option><option value="due_desc">Sort: Due Amount (High-Low)</option><option value="due_asc">Sort: Due Amount (Low-High)</option></select>' +
           '<button class="btn btn-ghost" onclick="resetDueBillsFilters()">Reset</button>' +
         '</div>' +
         '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
           '<button class="btn btn-ghost" onclick="exportDueBillsCsv()">⬇ Export CSV</button>' +
           '<button class="btn btn-ghost" onclick="exportDueBillsXlsx()">⬇ Export Excel (.xlsx)</button>' +
         '</div>' +
-        '<div class="table-scroll" style="max-height:380px" id="dbList"><div class="skeleton"></div></div>' +
       '</div>' +
     '</div></div>';
   loadDueBills();
 }
 
 function loadDueBills(){
-  q('#dbList').innerHTML = '<div class="skeleton"></div>';
+  q('#dbCustomerSummary').innerHTML = '<div class="skeleton"></div>';
   google.script.run
     .withSuccessHandler(function(res){
-      if(!res || !res.success){ q('#dbList').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; return; }
+      if(!res || !res.success){ q('#dbCustomerSummary').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; return; }
       DUE_BILLS_CACHE = res;
       paintDueBillTotals_();
-      paintDueBillCustomerSummary_();
       paintDueBillFilterOptions_();
-      paintDueBillsList();
+      paintDueBillCustomerSummary_();
     })
-    .withFailureHandler(function(){ q('#dbList').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; })
+    .withFailureHandler(function(){ q('#dbCustomerSummary').innerHTML = '<div class="empty-state">Failed to load due bills.</div>'; })
     .apiAdminGetDueBills(ATOKEN);
 }
 
@@ -3531,18 +3530,6 @@ function paintDueBillTotals_(){
     stat('Total Paid Amount', money(t.totalPaidAmount||0));
 }
 
-function paintDueBillCustomerSummary_(){
-  const host = q('#dbCustomerSummary');
-  if(!host) return;
-  const list = DUE_BILLS_CACHE.customerSummary || [];
-  if(!list.length){ host.innerHTML = '<div class="empty-state">No outstanding dues 🎉</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th>Customer</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
-    list.map(function(c){
-      return '<tr style="cursor:pointer" onclick="q(\'#dbCustomerFilter\').value=\''+esc(c.customerId)+'\'; paintDueBillsList();">' +
-        '<td>'+esc(c.customerName)+'</td><td>'+c.billCount+'</td><td style="font-weight:700;color:#c0392b">'+money(c.totalDue)+'</td></tr>';
-    }).join('') + '</tbody></table>';
-}
-
 function paintDueBillFilterOptions_(){
   const sel = q('#dbCustomerFilter');
   if(!sel) return;
@@ -3553,7 +3540,7 @@ function paintDueBillFilterOptions_(){
   sel.value = current;
 }
 
-// Shared - used by BOTH the on-screen list and the exports, so exported
+// Shared - used by the accordion AND the exports, so exported
 // files always match exactly what's currently visible/filtered on screen.
 function getFilteredDueBills_(){
   const custTerm = (q('#dbSearchCustomer')?q('#dbSearchCustomer').value:'').toLowerCase();
@@ -3585,20 +3572,66 @@ function getFilteredDueBills_(){
   return list;
 }
 
-function paintDueBillsList(){
-  const host = q('#dbList');
+// NEW: groups the currently-filtered bills by customer, preserving the
+// server's customerSummary order (falls back to first-seen order for
+// any customer not in that list).
+function groupFilteredDueBillsByCustomer_(){
+  const filtered = getFilteredDueBills_();
+  const map = {};
+  const seenOrder = [];
+  filtered.forEach(function(b){
+    const cid = String(b.customerId||'');
+    if(!map[cid]){
+      map[cid] = { customerId: cid, customerName: b.customerName, bills: [], totalDue: 0 };
+      seenOrder.push(cid);
+    }
+    map[cid].bills.push(b);
+    map[cid].totalDue += (b.dueAmount||0);
+  });
+  const summaryOrder = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){ return String(c.customerId||''); });
+  const order = summaryOrder.filter(function(cid){ return map[cid]; });
+  seenOrder.forEach(function(cid){ if(order.indexOf(cid)===-1) order.push(cid); });
+  return order.map(function(cid){ return map[cid]; });
+}
+
+// NEW: accordion - replaces the old flat #dbList table. Customer-wise
+// summary is now the only view; clicking a row expands/collapses its
+// bills in place. Multiple customers can stay open at once.
+function paintDueBillCustomerSummary_(){
+  const host = q('#dbCustomerSummary');
   if(!host) return;
-  const list = getFilteredDueBills_();
-  if(!list.length){ host.innerHTML = '<div class="empty-state">No matching due bills.</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th>Customer Name</th><th>Bill No.</th><th>Bill Date</th><th>Bill Amount</th><th>Paid</th><th>Due</th><th>Payment Status</th><th>Description</th></tr></thead><tbody>' +
-    list.map(function(b){
-      const statusColor = b.paymentStatus==='Unpaid' ? '#c0392b' : '#d68910';
-      return '<tr><td>'+esc(b.customerName)+'</td><td>#'+esc(b.refNo)+'</td><td>'+esc(b.date)+'</td>' +
-        '<td>'+money(b.billAmount)+'</td><td>'+money(b.paidAmount)+'</td>' +
-        '<td style="font-weight:700;color:'+statusColor+'">'+money(b.dueAmount)+'</td>' +
-        '<td><span style="color:'+statusColor+';font-weight:600;">'+esc((b.paymentStatusEmoji||'')+' '+b.paymentStatus)+'</span></td>' +
-        '<td>'+esc(b.description||'—')+'</td></tr>';
+  const groups = groupFilteredDueBillsByCustomer_();
+  if(!groups.length){ host.innerHTML = '<div class="empty-state">No matching due bills.</div>'; return; }
+  host.innerHTML = '<table><thead><tr><th style="width:22px"></th><th>Customer</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
+    groups.map(function(c){
+      const cidAttr = esc(c.customerId);
+      const isOpen = DUE_BILLS_EXPANDED_.has(c.customerId);
+      const arrow = isOpen ? '▼' : '▶';
+      let block = '<tr style="cursor:pointer" onclick="toggleDueBillCustomer_(\''+cidAttr+'\')">' +
+        '<td>'+arrow+'</td><td>'+esc(c.customerName)+'</td><td>'+c.bills.length+'</td>' +
+        '<td style="font-weight:700;color:#c0392b">'+money(c.totalDue)+'</td></tr>';
+      if(isOpen){
+        block += '<tr><td></td><td colspan="3" style="padding:4px 0 10px;">' +
+          '<table><thead><tr><th>Bill No.</th><th>Bill Date</th><th>Bill Amount</th><th>Paid</th><th>Due</th><th>Status</th><th>Description</th></tr></thead><tbody>' +
+          c.bills.map(function(b){
+            const statusColor = b.paymentStatus==='Unpaid' ? '#c0392b' : '#d68910';
+            return '<tr><td>#'+esc(b.refNo)+'</td><td>'+esc(b.date)+'</td>' +
+              '<td>'+money(b.billAmount)+'</td><td>'+money(b.paidAmount)+'</td>' +
+              '<td style="font-weight:700;color:'+statusColor+'">'+money(b.dueAmount)+'</td>' +
+              '<td><span style="color:'+statusColor+';font-weight:600;">'+esc((b.paymentStatusEmoji||'')+' '+b.paymentStatus)+'</span></td>' +
+              '<td>'+esc(b.description||'—')+'</td></tr>';
+          }).join('') + '</tbody></table>' +
+        '</td></tr>';
+      }
+      return block;
     }).join('') + '</tbody></table>';
+}
+
+// NEW: toggles one customer's accordion row without touching the others.
+function toggleDueBillCustomer_(cid){
+  if(DUE_BILLS_EXPANDED_.has(cid)) DUE_BILLS_EXPANDED_.delete(cid);
+  else DUE_BILLS_EXPANDED_.add(cid);
+  paintDueBillCustomerSummary_();
 }
 
 function resetDueBillsFilters(){
@@ -3609,7 +3642,7 @@ function resetDueBillsFilters(){
   q('#dbStatus').value = '';
   q('#dbCustomerFilter').value = '';
   q('#dbSort').value = 'date_desc';
-  paintDueBillsList();
+  paintDueBillCustomerSummary_();
 }
 
 // NEW: generic multi-sheet Excel (.xlsx) writer, built on the SheetJS
@@ -3624,23 +3657,30 @@ function downloadXlsx_(filename, sheets){
   XLSX.writeFile(wb, filename);
 }
 
-function dueBillsRowsForExport_(){
-  return getFilteredDueBills_().map(function(b){
-    return [b.customerName, b.refNo, b.date, b.billAmount, b.paidAmount, b.dueAmount, b.paymentStatus, b.description||''];
+// NEW: builds customer-wise grouped export rows - "Customer:" + "Total Due:"
+// header lines, then that customer's bill rows, then a blank separator,
+// repeated per customer. Used by BOTH CSV and Excel export so they match.
+function dueBillsGroupedRowsForExport_(){
+  const groups = groupFilteredDueBillsByCustomer_();
+  const rows = [];
+  groups.forEach(function(c, idx){
+    if(idx>0) rows.push([]);
+    rows.push(['Customer:', c.customerName]);
+    rows.push(['Total Due:', c.totalDue]);
+    rows.push(DUE_BILLS_BILL_HEADERS_.slice());
+    c.bills.forEach(function(b){
+      rows.push(['#'+b.refNo, b.date, b.billAmount, b.paidAmount, b.dueAmount, b.paymentStatus, b.description||'']);
+    });
   });
-}
-function dueBillsSummaryRowsForExport_(){
-  return (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){ return [c.customerName, c.billCount, c.totalDue]; });
+  return rows;
 }
 
 function exportDueBillsCsv(){
-  downloadCsv_('Due_Bills.csv', DUE_BILLS_HEADERS_, dueBillsRowsForExport_());
-  downloadCsv_('Due_Bills_Customer_Summary.csv', DUE_BILLS_SUMMARY_HEADERS_, dueBillsSummaryRowsForExport_());
+  downloadCsv_('Due_Bills.csv', ['Due Bills - Customer-wise Export'], dueBillsGroupedRowsForExport_());
 }
 function exportDueBillsXlsx(){
   downloadXlsx_('Due_Bills.xlsx', [
-    { name: 'Due Bills', headers: DUE_BILLS_HEADERS_, rows: dueBillsRowsForExport_() },
-    { name: 'Customer Summary', headers: DUE_BILLS_SUMMARY_HEADERS_, rows: dueBillsSummaryRowsForExport_() }
+    { name: 'Due Bills', headers: [], rows: dueBillsGroupedRowsForExport_() }
   ]);
 }
 /* ==================== /Due Bills ==================== */
