@@ -3535,7 +3535,7 @@ function paintDueBillFilterOptions_(){
   if(!sel) return;
   const current = sel.value;
   sel.innerHTML = '<option value="">All Customers</option>' + (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){
-    return '<option value="'+esc(c.customerId)+'">'+esc(c.customerName)+' ('+money(c.totalDue)+')</option>';
+    return '<option value="'+esc(dueBillGroupKey_(c.customerId, c.customerName))+'">'+esc(c.customerName)+' ('+money(c.totalDue)+')</option>';
   }).join('');
   sel.value = current;
 }
@@ -3550,7 +3550,7 @@ function getFilteredDueBills_(){
   const fromTime = from ? new Date(from).getTime() : null;
   const toTime = to ? (new Date(to).getTime() + 24*60*60*1000 - 1) : null;
   const status = q('#dbStatus')?q('#dbStatus').value:'';
-  const customerId = q('#dbCustomerFilter')?q('#dbCustomerFilter').value:'';
+  const customerKey = q('#dbCustomerFilter')?q('#dbCustomerFilter').value:'';
   const sort = q('#dbSort')?q('#dbSort').value:'date_desc';
 
   let list = (DUE_BILLS_CACHE.bills||[]).filter(function(b){
@@ -3559,7 +3559,7 @@ function getFilteredDueBills_(){
     if(fromTime && (!b.dateRaw || b.dateRaw < fromTime)) return false;
     if(toTime && (!b.dateRaw || b.dateRaw > toTime)) return false;
     if(status && b.paymentStatus !== status) return false;
-    if(customerId && String(b.customerId||'') !== customerId) return false;
+    if(customerKey && dueBillGroupKey_(b.customerId, b.customerName) !== customerKey) return false;
     return true;
   });
 
@@ -3572,6 +3572,14 @@ function getFilteredDueBills_(){
   return list;
 }
 
+// NEW: many bills have a blank customerId (walk-in / unlinked customers).
+// Mirrors the exact fallback key the server uses in apiAdminGetDueBills
+// (customerId, else 'NAME::'+uppercased name) so bills group the same
+// way here as they do in the server's customerSummary.
+function dueBillGroupKey_(customerId, customerName){
+  return customerId ? String(customerId) : ('NAME::' + String(customerName||'').toUpperCase());
+}
+
 // NEW: groups the currently-filtered bills by customer, preserving the
 // server's customerSummary order (falls back to first-seen order for
 // any customer not in that list).
@@ -3580,18 +3588,18 @@ function groupFilteredDueBillsByCustomer_(){
   const map = {};
   const seenOrder = [];
   filtered.forEach(function(b){
-    const cid = String(b.customerId||'');
-    if(!map[cid]){
-      map[cid] = { customerId: cid, customerName: b.customerName, bills: [], totalDue: 0 };
-      seenOrder.push(cid);
+    const key = dueBillGroupKey_(b.customerId, b.customerName);
+    if(!map[key]){
+      map[key] = { key: key, customerId: b.customerId||'', customerName: b.customerName, bills: [], totalDue: 0 };
+      seenOrder.push(key);
     }
-    map[cid].bills.push(b);
-    map[cid].totalDue += (b.dueAmount||0);
+    map[key].bills.push(b);
+    map[key].totalDue += (b.dueAmount||0);
   });
-  const summaryOrder = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){ return String(c.customerId||''); });
-  const order = summaryOrder.filter(function(cid){ return map[cid]; });
-  seenOrder.forEach(function(cid){ if(order.indexOf(cid)===-1) order.push(cid); });
-  return order.map(function(cid){ return map[cid]; });
+  const summaryOrder = (DUE_BILLS_CACHE.customerSummary||[]).map(function(c){ return dueBillGroupKey_(c.customerId, c.customerName); });
+  const order = summaryOrder.filter(function(key){ return map[key]; });
+  seenOrder.forEach(function(key){ if(order.indexOf(key)===-1) order.push(key); });
+  return order.map(function(key){ return map[key]; });
 }
 
 // NEW: accordion - replaces the old flat #dbList table. Customer-wise
@@ -3604,8 +3612,8 @@ function paintDueBillCustomerSummary_(){
   if(!groups.length){ host.innerHTML = '<div class="empty-state">No matching due bills.</div>'; return; }
   host.innerHTML = '<table><thead><tr><th style="width:22px"></th><th>Customer</th><th>Due Bills</th><th>Total Due</th></tr></thead><tbody>' +
     groups.map(function(c){
-      const cidAttr = esc(c.customerId);
-      const isOpen = DUE_BILLS_EXPANDED_.has(c.customerId);
+      const cidAttr = esc(c.key);
+      const isOpen = DUE_BILLS_EXPANDED_.has(c.key);
       const arrow = isOpen ? '▼' : '▶';
       let block = '<tr style="cursor:pointer" onclick="toggleDueBillCustomer_(\''+cidAttr+'\')">' +
         '<td>'+arrow+'</td><td>'+esc(c.customerName)+'</td><td>'+c.bills.length+'</td>' +
