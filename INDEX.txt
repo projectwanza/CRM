@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Customer Transaction Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    /* ===================== DESIGN TOKENS ===================== */
+    :root{
+      --primary:#2952e3; --primary-dark:#1e3fc4; --primary-light:#eef2ff;
+      --success:#16a34a; --success-bg:#ecfdf3;
+      --danger:#dc2626; --danger-bg:#fef2f2;
+      --warning:#d97706; --warning-bg:#fffbeb;
+      --neutral-bg:#f6f7fb; --card-bg:#ffffff;
+      --text-1:#101828; --text-2:#475467; --text-3:#98a2b3;
+      --border:#e4e7ec;
+      --radius:14px; --radius-sm:9px;
+      --shadow-sm:0 1px 2px rgba(16,24,40,.05);
+      --shadow-md:0 4px 12px rgba(16,24,40,.08);
+      --shadow-lg:0 12px 32px rgba(16,24,40,.14);
+    }
+    *{box-sizing:border-box;}
+    body{margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background:var(--neutral-bg);color:var(--text-1);-webkit-font-smoothing:antialiased;}
+    button{font-family:inherit;cursor:pointer;}
+    input,select{font-family:inherit;}
+    a{color:inherit;}
+    .hidden{display:none !important;}
+
+    /* ===================== LOGIN ===================== */
+    #loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+      background:linear-gradient(135deg,#1a2b6b 0%,#2952e3 55%,#4d6bff 100%);}
+    .login-card{width:100%;max-width:400px;background:var(--card-bg);border-radius:20px;box-shadow:var(--shadow-lg);padding:36px 32px;}
+    .login-brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;}
+    .login-brand .logo-dot{width:38px;height:38px;border-radius:10px;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;}
+    .login-brand .brand-text{font-weight:700;font-size:17px;}
+    .login-brand .brand-sub{font-size:12px;color:var(--text-3);}
+    .login-card h1{font-size:22px;margin:0 0 6px;}
+    .login-card p.sub{color:var(--text-2);font-size:14px;margin:0 0 26px;}
+    .field{margin-bottom:16px;}
+    .field label{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:6px;}
+    .field input{width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:14px;transition:.15s border-color;}
+    .field input:focus{outline:none;border-color:var(--primary);}
+    .btn{border:none;border-radius:var(--radius-sm);padding:12px 18px;font-weight:600;font-size:14px;transition:.15s;display:inline-flex;align-items:center;justify-content:center;gap:8px;}
+    .btn-primary{background:var(--primary);color:#fff;width:100%;}
+    .btn-primary:hover{background:var(--primary-dark);}
+    .btn-primary:disabled{opacity:.6;cursor:not-allowed;}
+    .btn-secondary{background:var(--primary-light);color:var(--primary);}
+    .btn-ghost{background:transparent;color:var(--text-2);border:1.5px solid var(--border);}
+    .btn-danger-ghost{background:transparent;color:var(--danger);border:1.5px solid #fca5a5;}
+    .login-error{background:var(--danger-bg);color:var(--danger);padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;margin-bottom:16px;}
+    .login-foot{text-align:center;margin-top:20px;font-size:12px;color:var(--text-3);}
+
+    /* ===================== APP SHELL ===================== */
+    #appShell{display:none;min-height:100vh;}
+    .topbar{position:sticky;top:0;z-index:30;background:#fff;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between;padding:12px 20px;}
+    .topbar-left{display:flex;align-items:center;gap:10px;}
+    .topbar-left .logo-dot{width:32px;height:32px;border-radius:8px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;}
+    .topbar-left span{font-weight:700;font-size:15px;}
+    .topbar-right{display:flex;align-items:center;gap:10px;}
+    .avatar-chip{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;background:var(--neutral-bg);border-radius:999px;cursor:pointer;}
+    .avatar-chip .circle{width:26px;height:26px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+    .avatar-chip span{font-size:13px;font-weight:600;}
+    .menu-btn{display:none;background:none;border:none;font-size:20px;padding:4px;}
+
+    .layout{display:flex;max-width:1280px;margin:0 auto;}
+    .sidebar{width:220px;flex-shrink:0;padding:20px 12px;position:sticky;top:57px;align-self:flex-start;height:calc(100vh - 57px);}
+    .nav-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:var(--radius-sm);font-size:14px;font-weight:500;color:var(--text-2);cursor:pointer;margin-bottom:2px;}
+    .nav-item:hover{background:var(--neutral-bg);}
+    .nav-item.active{background:var(--primary-light);color:var(--primary);font-weight:700;}
+    .nav-item .ic{width:18px;text-align:center;}
+
+    .main{flex:1;padding:24px 24px 60px;min-width:0;}
+    .page-header{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px;}
+    .page-header h2{margin:0 0 4px;font-size:22px;}
+    .page-header p{margin:0;color:var(--text-2);font-size:13px;}
+
+    /* ===================== CARDS / STATS ===================== */
+    .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
+    .stat-card{background:var(--card-bg);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow-sm);border:1px solid var(--border);}
+    .stat-card .label{font-size:12px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px;}
+    .stat-card .value{font-size:24px;font-weight:800;}
+    .stat-card .sub{font-size:12px;color:var(--text-2);margin-top:4px;}
+    .stat-card.blue .value{color:var(--primary);}
+    .stat-card.green .value{color:var(--success);}
+    .stat-card.red .value{color:var(--danger);}
+
+    .card{background:var(--card-bg);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow-sm);}
+    .card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+    .card-header h3{margin:0;font-size:15px;}
+    .card-body{padding:16px 20px;}
+
+    .section-gap{margin-bottom:24px;}
+    .two-col{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;}
+
+    /* ===================== TABLE ===================== */
+    .filters-bar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;}
+    .filters-bar input, .filters-bar select{padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:#fff;}
+    .filters-bar input[type=text]{min-width:180px;flex:1;}
+    table{width:100%;border-collapse:collapse;font-size:13px;}
+    thead th{text-align:left;padding:10px 12px;color:var(--text-3);font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:.03em;border-bottom:1px solid var(--border);white-space:nowrap;}
+    tbody td{padding:12px;border-bottom:1px solid var(--border);white-space:nowrap;}
+    tbody tr{cursor:pointer;transition:.1s;}
+    tbody tr:hover{background:var(--neutral-bg);}
+    .table-scroll{overflow-x:auto;}
+
+    .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;}
+    .badge-paid{background:var(--success-bg);color:var(--success);}
+    .badge-unpaid{background:var(--danger-bg);color:var(--danger);}
+    .badge-partial{background:var(--warning-bg);color:var(--warning);}
+    .badge-scheme{background:#f0e9ff;color:#7c3aed;}
+    .badge-regular{background:#e0f2fe;color:#0369a1;}
+
+    .amt-pos{color:var(--success);font-weight:700;}
+    .amt-due{color:var(--danger);font-weight:700;}
+
+    .pagination{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;font-size:13px;color:var(--text-2);}
+    .pagination .pg-btns{display:flex;gap:6px;}
+    .pg-btn{padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;}
+    .pg-btn:disabled{opacity:.4;cursor:not-allowed;}
+
+    /* transaction cards (mobile) */
+    .txn-cards{display:none;flex-direction:column;gap:10px;}
+    .txn-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;cursor:pointer;}
+    .txn-card .row1{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+    .txn-card .ttype{font-weight:700;font-size:14px;}
+    .txn-card .date{font-size:12px;color:var(--text-3);}
+    .txn-card .row2{display:flex;justify-content:space-between;align-items:center;}
+    .txn-card .amt{font-weight:800;font-size:16px;}
+    .txn-card .desc{font-size:12px;color:var(--text-2);margin-top:4px;}
+
+    /* ===================== SCHEME / EMPTY / SKELETON ===================== */
+    .scheme-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
+    .scheme-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:16px;cursor:pointer;transition:.15s;}
+    .scheme-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px);}
+    .scheme-card .sid{font-weight:800;color:#7c3aed;font-size:14px;}
+    .scheme-card .rid{font-size:12px;color:var(--text-3);margin-bottom:12px;}
+    .scheme-row{display:flex;justify-content:space-between;font-size:12px;color:var(--text-2);padding:3px 0;}
+    .scheme-row b{color:var(--text-1);}
+
+    .empty-state{text-align:center;padding:50px 20px;color:var(--text-3);}
+    .empty-state .ic{font-size:34px;margin-bottom:10px;}
+    .empty-state p{margin:0;font-size:13px;}
+
+    .skeleton{background:linear-gradient(90deg,#eef0f3 25%,#e4e7ec 37%,#eef0f3 63%);background-size:400% 100%;animation:sk 1.4s ease infinite;border-radius:8px;}
+    @keyframes sk{0%{background-position:100% 50%}100%{background-position:0 50%}}
+    .sk-card{height:88px;}
+    .sk-row{height:44px;margin-bottom:8px;}
+
+    /* ===================== MODAL ===================== */
+    .modal-overlay{position:fixed;inset:0;background:rgba(16,24,40,.5);z-index:100;display:flex;align-items:flex-end;justify-content:center;}
+    @media(min-width:720px){.modal-overlay{align-items:center;}}
+    .modal{background:#fff;width:100%;max-width:640px;max-height:90vh;overflow-y:auto;border-radius:18px 18px 0 0;box-shadow:var(--shadow-lg);}
+    @media(min-width:720px){.modal{border-radius:18px;}}
+    .modal-head{position:sticky;top:0;background:#fff;padding:18px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;z-index:2;}
+    .modal-head h3{margin:0;font-size:16px;}
+    .modal-close{border:none;background:var(--neutral-bg);width:30px;height:30px;border-radius:50%;font-size:16px;}
+    .modal-body{padding:20px 22px;}
+    .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;margin-bottom:18px;}
+    .detail-item .k{font-size:11px;color:var(--text-3);text-transform:uppercase;font-weight:700;letter-spacing:.03em;margin-bottom:3px;}
+    .detail-item .v{font-size:14px;font-weight:600;}
+    .amount-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0;}
+    .amount-box{background:var(--neutral-bg);border-radius:10px;padding:12px;text-align:center;}
+    .amount-box .k{font-size:11px;color:var(--text-3);margin-bottom:4px;}
+    .amount-box .v{font-weight:800;font-size:15px;}
+    /* --- Scheme ledger accordion (added) --- */
+    .table-scroll-responsive{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+    .ledger-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0;}
+    .scheme-panel{padding:16px 4px;background:var(--neutral-bg);border-radius:var(--radius-sm);margin:4px 0 10px;}
+    .scheme-row-toggle{cursor:pointer;}
+    .ledger-row{cursor:pointer;}
+    .ledger-filter-bar{margin-bottom:14px;}
+    .ledger-txn-actions{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;}
+    .ledger-txn-actions .btn{flex:1;min-width:140px;}
+    .txn-inline-detail{background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin:6px 0;}
+    @media print {
+      .sidebar, .topbar, .sidebar-backdrop, .filters-bar, .nav-item, .btn, button { display:none !important; }
+    }
+    .items-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px;}
+    .items-table th{text-align:left;color:var(--text-3);font-size:10.5px;text-transform:uppercase;padding:8px 6px;border-bottom:1px solid var(--border);}
+    .items-table td{padding:8px 6px;border-bottom:1px solid var(--border);}
+    .modal-actions{display:flex;gap:10px;padding:16px 22px 22px;}
+
+    /* ===================== TOAST ===================== */
+    #toastHost{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;width:100%;pointer-events:none;}
+    .toast{background:#101828;color:#fff;padding:11px 20px;border-radius:10px;font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);animation:toastin .2s ease;}
+    .toast.err{background:var(--danger);}
+    .toast.ok{background:var(--success);}
+    @keyframes toastin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+    /* ===================== RESPONSIVE ===================== */
+    @media(max-width:900px){
+      .stat-grid{grid-template-columns:repeat(2,1fr);}
+      .two-col{grid-template-columns:1fr;}
+    }
+    @media(max-width:760px){
+      .menu-btn{display:block;}
+      .sidebar{position:fixed;left:-240px;top:0;bottom:0;width:220px;background:#fff;z-index:60;box-shadow:var(--shadow-lg);height:100vh;top:0;transition:.2s;padding-top:70px;}
+      .sidebar.open{left:0;}
+      .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;}
+      .sidebar-backdrop.open{display:block;}
+      .main{padding:16px 14px 80px;}
+      .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px;}
+      .stat-card{padding:14px;}
+      .stat-card .value{font-size:19px;}
+      .table-scroll{display:none;}
+      .txn-cards{display:flex;}
+      .amount-summary{grid-template-columns:1fr 1fr;}
+      .detail-grid{grid-template-columns:1fr;}
+      .filters-bar select, .filters-bar input{flex:1 1 45%;}
+      .ledger-summary{grid-template-columns:1fr 1fr;}
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===================== LOGIN SCREEN ===================== -->
+  <div id="loginScreen">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="logo-dot">CT</div>
+        <div>
+          <div class="brand-text">Customer Portal</div>
+          <div class="brand-sub">Transaction &amp; Ledger Access</div>
+        </div>
+      </div>
+      <h1>Welcome back</h1>
+      <p class="sub">Sign in with your Customer ID to view your transactions.</p>
+      <div id="loginError" class="login-error hidden"></div>
+      <div class="field">
+        <label>Customer ID</label>
+        <input type="text" id="loginCustomerId" placeholder="e.g. CUI2026001" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="Enter your password" autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" id="loginBtn" onclick="handleLogin()">Sign In</button>
+      <div class="login-foot">Trouble logging in? Contact your account manager.</div>
+    </div>
+  </div>
+
+  <!-- ===================== APP SHELL ===================== -->
+  <div id="appShell">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="menu-btn" onclick="toggleSidebar()">&#9776;</button>
+        <div class="logo-dot">CT</div>
+        <span>Customer Portal</span>
+      </div>
+      <div class="topbar-right">
+        <div class="avatar-chip" onclick="navigate('profile')">
+          <div class="circle" id="avatarInitial">C</div>
+          <span id="topbarName">Customer</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
+    <div class="layout">
+      <div class="sidebar" id="sidebar">
+        <div class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')"><span class="ic">&#9635;</span> Dashboard</div>
+        <div class="nav-item" data-page="transactions" onclick="navigate('transactions')"><span class="ic">&#8801;</span> Transactions</div>
+        <div class="nav-item" data-page="schemes" onclick="navigate('schemes')"><span class="ic">&#9733;</span> My Schemes</div>
+        <div class="nav-item" data-page="regular" onclick="navigate('regular')"><span class="ic">&#8226;</span> Regular Txns</div>
+        <div class="nav-item" data-page="profile" onclick="navigate('profile')"><span class="ic">&#9787;</span> My Profile</div>
+        <div class="nav-item" onclick="handleLogout()" style="margin-top:16px;color:var(--danger);"><span class="ic">&#8630;</span> Logout</div>
+      </div>
+
+      <div class="main" id="mainContent">
+        <!-- injected per page -->
+      </div>
+    </div>
+  </div>
+
+  <div id="modalHost"></div>
+  <div id="toastHost"></div>
+
+<script>
+/* NEW: cross-host bridge. If real google.script.run exists (page opened
+   from the Apps Script /exec URL), this block does nothing at all.
+   If the page is hosted anywhere else (GitHub Pages etc.), it polyfills
+   google.script.run so every call below keeps working unchanged. */
+(function(){
+  var GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwiuWld-fn2nnHtoSiEdrGXn2V0RUm-itIw2OiziY2H1da_uj00ds1eetQJGXgBoDuxVw/exec';
+
+  if (window.google && window.google.script && window.google.script.run) return;
+  window.google = window.google || {};
+  window.google.script = window.google.script || {};
+
+  function makeRunner(onOk, onErr){
+    return new Proxy({}, {
+      get: function(_, fnName){
+        if (fnName === 'withSuccessHandler') return function(cb){ return makeRunner(cb, onErr); };
+        if (fnName === 'withFailureHandler') return function(cb){ return makeRunner(onOk, cb); };
+        if (fnName === 'withUserObject')     return function(){ return makeRunner(onOk, onErr); };
+        return function(){
+          var args = Array.prototype.slice.call(arguments);
+          fetch(GAS_WEBAPP_URL, { method: 'POST', body: JSON.stringify({ fn: fnName, args: args }) })
+            .then(function(r){ return r.json(); })
+            .then(function(res){
+              if (res.ok) { if (onOk) onOk(res.result); }
+              else { if (onErr) onErr(new Error(res.error)); else console.error(res.error); }
+            })
+            .catch(function(err){ if (onErr) onErr(err); else console.error(err); });
+        };
+      }
+    });
+  }
+  window.google.script.run = makeRunner(null, null);
+})();
+</script>
+
+<script>
+/* =========================================================
+   CLIENT APP STATE
+========================================================= */
+function pad2(n){ return n<10 ? '0'+n : ''+n; }
+function ymd(d){ return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()); }
+function presetToRange(preset){
+  const now = new Date();
+  if(preset === 'all_time'){
+    return { from: '', to: '' };
+  }
+  if(preset === 'this_month'){
+    return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(new Date(now.getFullYear(), now.getMonth()+1, 0)) };
+  }
+  if(preset === 'last_month'){
+    return { from: ymd(new Date(now.getFullYear(), now.getMonth()-1, 1)), to: ymd(new Date(now.getFullYear(), now.getMonth(), 0)) };
+  }
+  return { from: '', to: '' };
+}
+
+let STATE = {
+  token: sessionStorage.getItem('portal_token') || null,
+  customerId: sessionStorage.getItem('portal_customerId') || null,
+  customerName: sessionStorage.getItem('portal_customerName') || null,
+  page: 'dashboard',
+  txnFilters: { search:'', transactionType:'', category_scheme:'', paymentStatus:'', dateFrom:'', dateTo:'', sortBy:'', page:1, pageSize:20 },
+  dashFilters: (function(){ const r = presetToRange('all_time'); return { preset:'all_time', dateFrom:r.from, dateTo:r.to }; })()
+};
+
+function q(sel){ return document.querySelector(sel); }
+function qa(sel){ return Array.from(document.querySelectorAll(sel)); }
+function esc(s){ return (s===undefined||s===null) ? '' : String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function money(n){ n = Number(n)||0; return '₹' + n.toLocaleString('en-IN', {maximumFractionDigits:2}); }
+
+function showToast(msg, type){
+  const host = q('#toastHost');
+  const el = document.createElement('div');
+  el.className = 'toast' + (type ? ' ' + type : '');
+  el.textContent = msg;
+  host.appendChild(el);
+  setTimeout(function(){ el.remove(); }, 3200);
+}
+
+/* =========================================================
+   AUTH
+========================================================= */
+function handleLogin(){
+  const customerId = q('#loginCustomerId').value.trim();
+  const password = q('#loginPassword').value;
+  const errBox = q('#loginError');
+  errBox.classList.add('hidden');
+
+  if(!customerId || !password){
+    errBox.textContent = 'Please enter both Customer ID and password.';
+    errBox.classList.remove('hidden');
+    return;
+  }
+
+  const btn = q('#loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in...';
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      btn.disabled = false; btn.textContent = 'Sign In';
+      if(res.success){
+        STATE.token = res.token;
+        STATE.customerId = res.customerId;
+        STATE.customerName = res.customerName;
+        sessionStorage.setItem('portal_token', res.token);
+        sessionStorage.setItem('portal_customerId', res.customerId);
+        sessionStorage.setItem('portal_customerName', res.customerName);
+        enterApp();
+      } else {
+        errBox.textContent = res.message || 'Login failed.';
+        errBox.classList.remove('hidden');
+      }
+    })
+    .withFailureHandler(function(err){
+      btn.disabled = false; btn.textContent = 'Sign In';
+      errBox.textContent = 'Something went wrong. Please try again.';
+      errBox.classList.remove('hidden');
+    })
+    .apiLogin(customerId, password);
+}
+
+function handleLogout(){
+  google.script.run.apiLogout(STATE.token);
+  sessionStorage.clear();
+  STATE = { token:null, customerId:null, customerName:null, page:'dashboard', txnFilters: STATE.txnFilters };
+  q('#appShell').style.display = 'none';
+  q('#loginScreen').style.display = 'flex';
+  q('#loginCustomerId').value = '';
+  q('#loginPassword').value = '';
+}
+
+function enterApp(){
+  q('#loginScreen').style.display = 'none';
+  q('#appShell').style.display = 'block';
+  q('#topbarName').textContent = STATE.customerName;
+  q('#avatarInitial').textContent = (STATE.customerName || 'C').charAt(0).toUpperCase();
+  navigate('dashboard');
+}
+
+// Attempt to resume a session on load
+window.addEventListener('load', function(){
+  if(STATE.token){
+    google.script.run.withSuccessHandler(function(res){
+      if(res.valid){ enterApp(); }
+      else { sessionStorage.clear(); }
+    }).withFailureHandler(function(){ sessionStorage.clear(); }).apiCheckSession(STATE.token);
+  }
+  q('#loginPassword').addEventListener('keydown', function(e){ if(e.key==='Enter') handleLogin(); });
+});
+
+function toggleSidebar(){
+  q('#sidebar').classList.toggle('open');
+  q('#sidebarBackdrop').classList.toggle('open');
+}
+
+/* =========================================================
+   ROUTER
+========================================================= */
+function navigate(page){
+  STATE.page = page;
+  qa('.nav-item[data-page]').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('data-page') === page);
+  });
+  q('#sidebar').classList.remove('open');
+  q('#sidebarBackdrop').classList.remove('open');
+
+  if(page === 'dashboard') renderDashboard();
+  else if(page === 'transactions') renderTransactions();
+  else if(page === 'schemes') renderSchemes();
+  else if(page === 'regular') renderRegular();
+  else if(page === 'profile') renderProfile();
+}
+
+function onSessionError(){
+  showToast('Your session has expired. Please log in again.', 'err');
+  handleLogout();
+}
+
+/* =========================================================
+   DASHBOARD
+========================================================= */
+function renderDashboard(){
+  const main = q('#mainContent');
+  const f = STATE.dashFilters;
+  main.innerHTML =
+    '<div class="page-header"><div><h2>Dashboard</h2><p>Hello, ' + esc(STATE.customerName) + ' &middot; ID: ' + esc(STATE.customerId) + '</p></div></div>' +
+    '<div class="filters-bar" id="dashFilterBar">' +
+      '<select id="dfPreset" onchange="onDashPresetChange()">' +
+        '<option value="all_time">All Time</option>' +
+        '<option value="this_month">This Month</option>' +
+        '<option value="last_month">Last Month</option>' +
+        '<option value="custom">Custom Date Range</option>' +
+      '</select>' +
+      '<input type="date" id="dfFrom" class="hidden" onchange="applyDashFilter()">' +
+      '<input type="date" id="dfTo" class="hidden" onchange="applyDashFilter()">' +
+    '</div>' +
+    '<div class="stat-grid" id="statGrid">' +
+      skCard() + skCard() + skCard() + skCard() + skCard() +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card-header"><h3>Recent Transactions</h3><span style="font-size:12px;color:var(--text-3);cursor:pointer" onclick="navigate(\'transactions\')">View all &rarr;</span></div>' +
+      '<div class="card-body table-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Amount</th><th>Status</th></tr></thead><tbody id="dashRecentBody"><tr><td colspan="5">' + skRows(3) + '</td></tr></tbody></table></div>' +
+    '</div>' +
+    '<div class="card section-gap">' +
+      '<div class="card-header"><h3>Linked Accounts / Account Summary</h3><span id="laCliLabel" style="font-size:12px;color:var(--text-3);"></span></div>' +
+      '<div class="filters-bar">' +
+        '<select id="laPreset" onchange="onLaPresetChange()">' +
+          '<option value="all_time">All Time</option>' +
+          '<option value="this_month">This Month</option>' +
+          '<option value="last_month">Last Month</option>' +
+          '<option value="custom">Custom Date Range</option>' +
+        '</select>' +
+        '<input type="date" id="laFrom" class="hidden">' +
+        '<input type="date" id="laTo" class="hidden">' +
+        '<button class="btn btn-secondary" onclick="applyLaFilter()">Apply</button>' +
+        '<button class="btn btn-ghost" onclick="resetLaFilter()">Reset</button>' +
+      '</div>' +
+      '<div class="card-body table-scroll"><table><thead><tr><th>Customer ID</th><th>Opening Balance</th><th>Sales</th><th>Payment</th><th>Outstanding</th></tr></thead><tbody id="laBody"><tr><td colspan="5">' + skRows(2) + '</td></tr></tbody></table></div>' +
+    '</div>';
+
+  q('#dfPreset').value = f.preset;
+  q('#dfFrom').value = f.dateFrom;
+  q('#dfTo').value = f.dateTo;
+  if(f.preset === 'custom'){ q('#dfFrom').classList.remove('hidden'); q('#dfTo').classList.remove('hidden'); }
+
+  loadDashboard();
+}
+
+function onDashPresetChange(){
+  const preset = q('#dfPreset').value;
+  if(preset === 'custom'){
+    q('#dfFrom').classList.remove('hidden');
+    q('#dfTo').classList.remove('hidden');
+    return; // wait for the user to actually pick From/To dates
+  }
+  q('#dfFrom').classList.add('hidden');
+  q('#dfTo').classList.add('hidden');
+  applyDashFilter();
+}
+
+function applyDashFilter(){
+  const preset = q('#dfPreset').value;
+  STATE.dashFilters.preset = preset;
+  if(preset === 'custom'){
+    STATE.dashFilters.dateFrom = q('#dfFrom').value;
+    STATE.dashFilters.dateTo = q('#dfTo').value;
+  } else {
+    const r = presetToRange(preset);
+    STATE.dashFilters.dateFrom = r.from;
+    STATE.dashFilters.dateTo = r.to;
+  }
+  loadDashboard();
+}
+
+function loadDashboard(){
+  const f = STATE.dashFilters;
+  google.script.run
+    .withSuccessHandler(function(data){ paintDashboard(data); })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Could not load dashboard.', 'err'); })
+    .apiGetDashboard(STATE.token, f.dateFrom, f.dateTo);
+  loadLinkedAccounts();
+}
+
+STATE.laFilters = STATE.laFilters || { preset: 'all_time', dateFrom: '', dateTo: '' };
+
+function onLaPresetChange(){
+  const preset = q('#laPreset').value;
+  if(preset === 'custom'){ q('#laFrom').classList.remove('hidden'); q('#laTo').classList.remove('hidden'); return; }
+  q('#laFrom').classList.add('hidden'); q('#laTo').classList.add('hidden');
+}
+
+function applyLaFilter(){
+  const preset = q('#laPreset').value;
+  STATE.laFilters.preset = preset;
+  if(preset === 'custom'){
+    STATE.laFilters.dateFrom = q('#laFrom').value;
+    STATE.laFilters.dateTo = q('#laTo').value;
+  } else {
+    const r = presetToRange(preset);
+    STATE.laFilters.dateFrom = r.from;
+    STATE.laFilters.dateTo = r.to;
+  }
+  loadLinkedAccounts();
+}
+
+function resetLaFilter(){
+  STATE.laFilters = { preset: 'all_time', dateFrom: '', dateTo: '' };
+  q('#laPreset').value = 'all_time';
+  q('#laFrom').classList.add('hidden'); q('#laTo').classList.add('hidden');
+  loadLinkedAccounts();
+}
+
+function loadLinkedAccounts(){
+  const f = STATE.laFilters;
+  google.script.run
+    .withSuccessHandler(paintLinkedAccounts)
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Could not load linked accounts.', 'err'); })
+    .apiGetLinkedAccounts(STATE.token, f.dateFrom, f.dateTo);
+}
+
+function paintLinkedAccounts(res){
+  if(!res.success){ q('#laBody').innerHTML = '<tr><td colspan="5">'+emptyState(res.message||'Not available.')+'</td></tr>'; return; }
+  q('#laCliLabel').textContent = 'CLI No: ' + (res.cliNo || '(Not Linked)');
+  const rows = res.items.map(function(it){
+    return '<tr><td><b>'+esc(it.customerId)+'</b></td><td>'+money(it.openingBalance)+'</td><td>'+money(it.sales)+'</td><td>'+money(it.payment)+'</td><td>'+money(it.outstanding)+'</td></tr>';
+  }).join('');
+  const t = res.totals;
+  q('#laBody').innerHTML = rows + '<tr style="font-weight:700;border-top:2px solid var(--border);"><td>TOTAL</td><td>'+money(t.openingBalance)+'</td><td>'+money(t.sales)+'</td><td>'+money(t.payment)+'</td><td>'+money(t.outstanding)+'</td></tr>';
+}
+
+function skCard(){ return '<div class="stat-card skeleton sk-card"></div>'; }
+function skRows(n){ let s=''; for(let i=0;i<n;i++) s += '<div class="skeleton sk-row"></div>'; return s; }
+
+function paintDashboard(data){
+  const t = data.totals;
+  q('#statGrid').innerHTML =
+    statCard('Opening Balance', money(t.openingBalance), '') +
+    statCard('Total Sales', money(t.totalSales), 'blue') +
+    statCard('Total Paid', money(t.totalPaid), 'green') +
+    statCard('Outstanding', money(t.totalOutstanding), 'red') +
+    statCard('Transactions', t.totalTransactions, '');
+
+  if(data.recentTransactions.length === 0){
+    q('#dashRecentBody').innerHTML = '<tr><td colspan="5">' + emptyState('No transactions found.') + '</td></tr>';
+  } else {
+    q('#dashRecentBody').innerHTML = data.recentTransactions.map(function(t){
+      return '<tr onclick="openTransactionDetail(\'' + esc(t.refNo) + '\')">' +
+        '<td>' + esc(t.date) + '</td>' +
+        '<td>' + esc(t.transactionType) + '</td>' +
+        '<td>#' + esc(t.refNo) + '</td>' +
+        '<td>' + money(t.amount) + '</td>' +
+        '<td>' + statusBadge(t.paymentStatus) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+}
+
+function statCard(label, value, colorClass){
+  return '<div class="stat-card ' + colorClass + '"><div class="label">' + label + '</div><div class="value">' + value + '</div></div>';
+}
+
+function statusBadge(status){
+  const s = String(status||'').toLowerCase();
+  let cls = 'badge-partial';
+  if(s === 'paid') cls = 'badge-paid';
+  else if(s === 'unpaid') cls = 'badge-unpaid';
+  return '<span class="badge ' + cls + '">' + esc(status || '-') + '</span>';
+}
+
+function typeBadge(type){
+  const cls = type === 'SCHEME' ? 'badge-scheme' : (type === 'REGULAR' ? 'badge-regular' : 'badge-partial');
+  return '<span class="badge ' + cls + '">' + esc(type) + '</span>';
+}
+
+function emptyState(msg){
+  return '<div class="empty-state"><div class="ic">&#128193;</div><p>' + esc(msg) + '</p></div>';
+}
+
+/* =========================================================
+   TRANSACTIONS
+========================================================= */
+function renderTransactions(){
+  const main = q('#mainContent');
+  const f = STATE.txnFilters;
+  main.innerHTML =
+    '<div class="page-header"><div><h2>Transaction History</h2><p>Search, filter and review all your transactions.</p></div></div>' +
+    '<div class="filters-bar">' +
+      '<input type="text" id="fSearch" placeholder="Search ref no, description..." value="' + esc(f.search) + '">' +
+      '<select id="fType" onchange="applyFilters()">' +
+        '<option value="">All Types</option>' +
+        '<option value="Sale">Sale</option><option value="Payment-in">Payment-in</option><option value="Credit Note">Credit Note</option>' +
+      '</select>' +
+      '<select id="fCat" onchange="applyFilters()">' +
+        '<option value="">Scheme / Regular</option><option value="SCHEME">Scheme</option><option value="REGULAR">Regular</option>' +
+      '</select>' +
+      '<select id="fStatus" onchange="applyFilters()">' +
+        '<option value="">All Status</option><option value="Paid">Paid</option><option value="Unpaid">Unpaid</option><option value="Partial">Partial</option>' +
+      '</select>' +
+      '<input type="date" id="fFrom" onchange="applyFilters()">' +
+      '<input type="date" id="fTo" onchange="applyFilters()">' +
+      '<select id="fSort" onchange="applyFilters()">' +
+        '<option value="">Sort: Newest</option><option value="amount_desc">Amount: High to Low</option><option value="amount_asc">Amount: Low to High</option>' +
+      '</select>' +
+      '<button class="btn btn-secondary" onclick="applyFilters()">Search</button>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="table-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Category</th><th>Amount</th><th>Received</th><th>Paid</th><th>Balance</th><th>Status</th><th>Class</th></tr></thead><tbody id="txnTableBody"><tr><td colspan="10">' + skRows(4) + '</td></tr></tbody></table></div>' +
+      '<div class="txn-cards" id="txnCardsWrap"></div>' +
+      '<div class="pagination" id="txnPagination"></div>' +
+    '</div>';
+
+  q('#fType').value = f.transactionType;
+  q('#fCat').value = f.category_scheme;
+  q('#fStatus').value = f.paymentStatus;
+  q('#fFrom').value = f.dateFrom;
+  q('#fTo').value = f.dateTo;
+  q('#fSort').value = f.sortBy;
+  q('#fSearch').addEventListener('keydown', function(e){ if(e.key==='Enter') applyFilters(); });
+
+  loadTransactions();
+}
+
+function applyFilters(){
+  STATE.txnFilters.search = q('#fSearch').value;
+  STATE.txnFilters.transactionType = q('#fType').value;
+  STATE.txnFilters.category_scheme = q('#fCat').value;
+  STATE.txnFilters.paymentStatus = q('#fStatus').value;
+  STATE.txnFilters.dateFrom = q('#fFrom').value;
+  STATE.txnFilters.dateTo = q('#fTo').value;
+  STATE.txnFilters.sortBy = q('#fSort').value;
+  STATE.txnFilters.page = 1;
+  loadTransactions();
+}
+
+function goToPage(p){
+  STATE.txnFilters.page = p;
+  loadTransactions();
+}
+
+function loadTransactions(){
+  google.script.run
+    .withSuccessHandler(paintTransactions)
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Could not load transactions.', 'err'); })
+    .apiGetTransactions(STATE.token, STATE.txnFilters);
+}
+
+function paintTransactions(res){
+  const body = q('#txnTableBody');
+  const cardsWrap = q('#txnCardsWrap');
+  if(!res.items.length){
+    body.innerHTML = '<tr><td colspan="10">' + emptyState('No transactions match your filters.') + '</td></tr>';
+    cardsWrap.innerHTML = emptyState('No transactions match your filters.');
+    q('#txnPagination').innerHTML = '';
+    return;
+  }
+
+  body.innerHTML = res.items.map(function(t){
+    return '<tr onclick="openTransactionDetail(\'' + esc(t.refNo) + '\')">' +
+      '<td>' + esc(t.date) + '</td><td>' + esc(t.transactionType) + '</td><td>#' + esc(t.refNo) + '</td>' +
+      '<td>' + esc(t.category) + '</td><td>' + money(t.amount) + '</td><td>' + money(t.receivedAmount) + '</td>' +
+      '<td>' + money(t.paidAmount) + '</td><td>' + money(t.balanceAmount) + '</td>' +
+      '<td>' + statusBadge(t.paymentStatus) + '</td><td>' + typeBadge(t.category_scheme) + '</td></tr>';
+  }).join('');
+
+  cardsWrap.innerHTML = res.items.map(function(t){
+    return '<div class="txn-card" onclick="openTransactionDetail(\'' + esc(t.refNo) + '\')">' +
+      '<div class="row1"><span class="ttype">' + esc(t.transactionType) + '</span><span class="date">' + esc(t.date) + '</span></div>' +
+      '<div class="row2"><span class="amt">' + money(t.amount) + '</span>' + statusBadge(t.paymentStatus) + '</div>' +
+      '<div class="desc">#' + esc(t.refNo) + ' &middot; ' + esc(t.description || '') + ' ' + typeBadge(t.category_scheme) + '</div>' +
+      '</div>';
+  }).join('');
+
+  const p = res.page, tp = res.totalPages;
+  q('#txnPagination').innerHTML =
+    '<span>Page ' + p + ' of ' + tp + ' (' + res.total + ' total)</span>' +
+    '<div class="pg-btns">' +
+      '<button class="pg-btn" ' + (p<=1?'disabled':'') + ' onclick="goToPage(' + (p-1) + ')">Prev</button>' +
+      '<button class="pg-btn" ' + (p>=tp?'disabled':'') + ' onclick="goToPage(' + (p+1) + ')">Next</button>' +
+    '</div>';
+}
+
+/* =========================================================
+   TRANSACTION DETAIL MODAL
+========================================================= */
+function openTransactionDetail(refNo){
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Transaction Details</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body" id="modalBody">' + skRows(4) + '</div>' +
+    '</div></div>';
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res.success){ showToast(res.message || 'Not found', 'err'); closeModal(); return; }
+      paintTransactionDetail(res);
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else { showToast('Could not load details.', 'err'); closeModal(); } })
+    .apiGetTransactionDetail(STATE.token, refNo);
+}
+
+function paintTransactionDetail(res){
+  const t = res.transaction;
+  let itemsHtml = '';
+  if(res.items && res.items.length){
+    itemsHtml = '<h4 style="margin:18px 0 8px;font-size:13px;">Item Details</h4>' +
+      '<div class="table-scroll"><table class="items-table"><thead><tr><th>Item</th><th>Code</th><th>HSN</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Disc.</th><th>GST</th><th>Amount</th></tr></thead><tbody>' +
+      res.items.map(function(it){
+        return '<tr><td>' + esc(it.itemName) + '</td><td>' + esc(it.itemCode) + '</td><td>' + esc(it.hsnSac) + '</td>' +
+          '<td>' + esc(it.quantity) + '</td><td>' + esc(it.unit) + '</td><td>' + money(it.pricePerUnit) + '</td>' +
+          '<td>' + esc(it.discount) + '</td><td>' + esc(it.gst) + '</td><td>' + money(it.amount) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  q('#modalBody').innerHTML =
+    '<div class="detail-grid">' +
+      detailItem('Customer', t.customerName) +
+      detailItem('Customer ID', t.customerId) +
+      detailItem('Scheme / Reg. ID', (t.schemeId || t.regularTransactionId || '-') + (t.registrationId ? ' / ' + t.registrationId : '')) +
+      detailItem('Invoice / Ref No.', '#' + t.refNo) +
+      detailItem('Date', t.date) +
+      detailItem('Transaction Type', t.transactionType) +
+      detailItem('Payment Type', t.paymentType || '-') +
+      detailItem('Classification', t.category_scheme) +
+    '</div>' +
+    '<div class="detail-item" style="margin-bottom:14px;"><div class="k">Description</div><div class="v" style="font-weight:500;">' + esc(t.description || '-') + '</div></div>' +
+    '<div class="amount-summary">' +
+      amountBox('Amount', t.amount) + amountBox('Received', t.receivedAmount) + amountBox('Paid', t.paidAmount) +
+    '</div>' +
+    '<div style="text-align:center;margin-bottom:6px;">' + statusBadge(t.paymentStatus) + ' &nbsp; Balance: <b>' + money(t.balanceAmount) + '</b></div>' +
+    itemsHtml;
+
+  q('#modalHost .modal').insertAdjacentHTML('beforeend',
+    '<div class="modal-actions"><button class="btn btn-secondary" style="flex:1" onclick="printStatement()">Print</button><button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Close</button></div>');
+}
+
+function detailItem(k,v){
+  return '<div class="detail-item"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v || '-') + '</div></div>';
+}
+function amountBox(k,v){
+  return '<div class="amount-box"><div class="k">' + esc(k) + '</div><div class="v">' + money(v) + '</div></div>';
+}
+function closeModal(){ q('#modalHost').innerHTML = ''; }
+function printStatement(){ window.print(); }
+
+/* =========================================================
+   SCHEMES
+========================================================= */
+function renderSchemes(){
+  const main = q('#mainContent');
+  main.innerHTML =
+    '<div class="page-header"><div><h2>My Schemes</h2><p>All scheme registrations and their transaction summary.</p></div></div>' +
+    '<div class="card section-gap"><div class="card-header"><h3>Available Schemes</h3></div><div class="table-scroll-responsive"><table><thead><tr><th>Scheme</th><th>Description</th><th>Duration</th><th>Action</th></tr></thead><tbody id="availSchemesBody"><tr><td colspan="4">' + skRows(2) + '</td></tr></tbody></table></div></div>' +
+    '<div class="page-header"><div><h3 style="margin:0;font-size:16px;">Registered Schemes</h3></div></div>' +
+    '<div class="card"><div class="table-scroll-responsive"><table><thead><tr><th>Scheme</th><th>Reg. ID</th><th>Purchase</th><th>Paid</th><th>Outstanding</th><th>Transactions</th></tr></thead><tbody id="schemeGrid"><tr><td colspan="6">' + skRows(3) + '</td></tr></tbody></table></div></div>';
+
+  loadAvailableSchemes();
+
+  google.script.run
+    .withSuccessHandler(function(data){
+      const body = q('#schemeGrid');
+      if(!data.schemes.length){ body.innerHTML = '<tr><td colspan="6">' + emptyState('You have no scheme transactions yet.') + '</td></tr>'; return; }
+      body.innerHTML = data.schemes.map(function(s){
+        const panelId = schemePanelId(s.schemeId, s.registrationId);
+        return '<tr class="scheme-row-toggle" onclick="toggleSchemePanel(\'' + esc(s.schemeId) + '\',\'' + esc(s.registrationId) + '\')">' +
+          '<td><b>' + esc(s.schemeName || s.schemeId) + '</b><br><span style="font-size:11px;color:var(--text-3);">' + esc(s.schemeId) + '</span></td>' +
+          '<td>' + esc(s.registrationId) + '</td>' +
+          '<td>' + money(s.totalPurchase) + '</td>' +
+          '<td>' + money(s.totalPaid) + '</td>' +
+          '<td>' + money(s.totalOutstanding) + '</td>' +
+          '<td>' + s.transactions + ' <span id="chev-' + panelId + '">&#9662;</span></td>' +
+          '</tr>' +
+          '<tr class="scheme-panel-row hidden" id="row-' + panelId + '"><td colspan="6"><div class="scheme-panel" id="panel-' + panelId + '"></div></td></tr>';
+      }).join('');
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Could not load schemes.', 'err'); })
+    .apiGetDashboard(STATE.token);
+}
+
+function loadAvailableSchemes(){
+  google.script.run
+    .withSuccessHandler(function(res){
+      const body = q('#availSchemesBody');
+      if(!res.items.length){ body.innerHTML = '<tr><td colspan="4">' + emptyState('No schemes available right now.') + '</td></tr>'; return; }
+      body.innerHTML = res.items.map(function(s){
+        const actionHtml = s.alreadyRegistered
+          ? '<span class="badge badge-paid">Registered &middot; ' + esc(s.registrationId) + '</span>'
+          : '<button class="btn btn-secondary" onclick="registerForScheme(\'' + esc(s.schemeId) + '\')">Register / Join</button>';
+        return '<tr>' +
+          '<td><b>' + esc(s.schemeName) + '</b><br><span style="font-size:11px;color:var(--text-3);">' + esc(s.schemeId) + '</span></td>' +
+          '<td style="font-size:12px;color:var(--text-2);">' + esc(s.description || '-') + '</td>' +
+          '<td style="font-size:12px;color:var(--text-3);">' + esc(s.startDate || '-') + ' &rarr; ' + esc(s.endDate || '-') + '</td>' +
+          '<td>' + actionHtml + '</td>' +
+          '</tr>';
+      }).join('');
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Could not load available schemes.', 'err'); })
+    .apiGetAvailableSchemes(STATE.token);
+}
+
+function registerForScheme(schemeId){
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(res.success){
+        showToast('Registered! Registration ID: ' + res.registrationId, 'ok');
+        showToast('Billing Party Name: ' + res.partyNameFormat, 'ok');
+        loadAvailableSchemes();
+      } else {
+        showToast(res.message || 'Registration failed.', 'err');
+      }
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Registration failed.', 'err'); })
+    .apiRegisterForScheme(STATE.token, schemeId);
+}
+
+function schemePanelId(schemeId, registrationId){
+  return (schemeId + '__' + registrationId).replace(/[^a-zA-Z0-9_]/g,'_');
+}
+
+function toggleSchemePanel(schemeId, registrationId){
+  const panelId = schemePanelId(schemeId, registrationId);
+  const row = q('#row-' + panelId);
+  const chev = q('#chev-' + panelId);
+  if(!row) return;
+
+  const isOpen = !row.classList.contains('hidden');
+  if(isOpen){
+    row.classList.add('hidden');
+    if(chev) chev.innerHTML = '&#9662;';
+    return;
+  }
+
+  if(STATE.openSchemePanelId && STATE.openSchemePanelId !== panelId){
+    const prevRow = q('#row-' + STATE.openSchemePanelId);
+    const prevChev = q('#chev-' + STATE.openSchemePanelId);
+    if(prevRow) prevRow.classList.add('hidden');
+    if(prevChev) prevChev.innerHTML = '&#9662;';
+  }
+
+  row.classList.remove('hidden');
+  if(chev) chev.innerHTML = '&#9652;';
+  STATE.openSchemePanelId = panelId;
+  STATE.schemePanelState = STATE.schemePanelState || {};
+  STATE.schemePanelState[panelId] = STATE.schemePanelState[panelId] || { schemeId: schemeId, registrationId: registrationId, dateFrom: '', dateTo: '' };
+  loadSchemeLedger(panelId);
+}
+
+function loadSchemeLedger(panelId){
+  const st = STATE.schemePanelState[panelId];
+  const panel = q('#panel-' + panelId);
+  panel.innerHTML = skRows(4);
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res.success){ panel.innerHTML = emptyState('Could not load scheme ledger.'); return; }
+      paintSchemeLedger(panelId, res);
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else panel.innerHTML = emptyState('Could not load scheme ledger.'); })
+    .apiGetSchemeDetail(STATE.token, st.schemeId, st.registrationId, st.dateFrom, st.dateTo);
+}
+
+function paintSchemeLedger(panelId, res){
+  const panel = q('#panel-' + panelId);
+  const L = res.ledger;
+  const st = STATE.schemePanelState[panelId];
+
+  const rowsHtml = L.rows.length ? L.rows.map(function(r, idx){
+    const txnRowId = panelId + '_t' + idx;
+    return '<tr class="ledger-row" onclick="toggleLedgerTxn(\'' + panelId + '\',' + idx + ',\'' + esc(r.refNo) + '\')">' +
+      '<td>' + esc(r.date) + '</td>' +
+      '<td>' + esc(r.transactionType) + '</td>' +
+      '<td>#' + esc(r.refNo) + '</td>' +
+      '<td>' + esc(r.description || r.transactionType) + '</td>' +
+      '<td>' + (r.debit ? money(r.debit) : '-') + '</td>' +
+      '<td>' + (r.credit ? money(r.credit) : '-') + '</td>' +
+      '<td><b>' + money(r.runningBalance) + '</b></td>' +
+      '</tr>' +
+      '<tr class="ledger-txn-detail-row hidden" id="txnrow-' + txnRowId + '"><td colspan="7"><div id="txndetail-' + txnRowId + '"></div></td></tr>';
+  }).join('') : '<tr><td colspan="7">' + emptyState('No transactions in this date range.') + '</td></tr>';
+
+  panel.innerHTML =
+    '<div class="ledger-summary">' +
+      ledgerBox('Opening Balance', L.openingBalance) +
+      ledgerBox('Total Sales', L.totalSales) +
+      ledgerBox('Total Paid', L.totalPaid) +
+      ledgerBox('Closing / Outstanding', L.closingBalance) +
+    '</div>' +
+    '<div class="filters-bar ledger-filter-bar">' +
+      '<input type="date" id="ldFrom-' + panelId + '" value="' + esc(st.dateFrom) + '">' +
+      '<input type="date" id="ldTo-' + panelId + '" value="' + esc(st.dateTo) + '">' +
+      '<button class="btn btn-secondary" onclick="applySchemeDateFilter(\'' + panelId + '\')">Apply</button>' +
+      '<button class="btn btn-ghost" onclick="resetSchemeDateFilter(\'' + panelId + '\')">All Dates</button>' +
+    '</div>' +
+    '<div class="table-scroll-responsive"><table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
+}
+
+function ledgerBox(label, value){
+  return '<div class="amount-box"><div class="k">' + esc(label) + '</div><div class="v">' + money(value) + '</div></div>';
+}
+
+function applySchemeDateFilter(panelId){
+  const st = STATE.schemePanelState[panelId];
+  st.dateFrom = q('#ldFrom-' + panelId).value;
+  st.dateTo = q('#ldTo-' + panelId).value;
+  loadSchemeLedger(panelId);
+}
+function resetSchemeDateFilter(panelId){
+  const st = STATE.schemePanelState[panelId];
+  st.dateFrom = '';
+  st.dateTo = '';
+  loadSchemeLedger(panelId);
+}
+
+function toggleLedgerTxn(panelId, idx, refNo){
+  const txnRowId = panelId + '_t' + idx;
+  const row = q('#txnrow-' + txnRowId);
+  if(!row) return;
+  const isOpen = !row.classList.contains('hidden');
+  if(isOpen){ row.classList.add('hidden'); return; }
+  row.classList.remove('hidden');
+
+  const holder = q('#txndetail-' + txnRowId);
+  holder.innerHTML = skRows(2);
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res.success){ holder.innerHTML = emptyState(res.message || 'Not found.'); return; }
+      paintInlineTxnDetail(holder, res, txnRowId);
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else holder.innerHTML = emptyState('Could not load details.'); })
+    .apiGetTransactionDetail(STATE.token, refNo);
+}
+
+function paintInlineTxnDetail(holder, res, txnRowId){
+  const t = res.transaction;
+  let itemsHtml = '';
+  if(res.items && res.items.length){
+    itemsHtml = '<h4 style="margin:14px 0 8px;font-size:13px;">Item Details</h4>' +
+      '<div class="table-scroll-responsive"><table class="items-table"><thead><tr><th>Item</th><th>Code</th><th>HSN</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Disc.</th><th>GST</th><th>Amount</th></tr></thead><tbody>' +
+      res.items.map(function(it){
+        return '<tr><td>' + esc(it.itemName) + '</td><td>' + esc(it.itemCode) + '</td><td>' + esc(it.hsnSac) + '</td>' +
+          '<td>' + esc(it.quantity) + '</td><td>' + esc(it.unit) + '</td><td>' + money(it.pricePerUnit) + '</td>' +
+          '<td>' + esc(it.discount) + '</td><td>' + esc(it.gst) + '</td><td>' + money(it.amount) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  holder.innerHTML =
+    '<div class="txn-inline-detail">' +
+      '<div class="detail-grid">' +
+        detailItem('Ref No.', '#' + t.refNo) +
+        detailItem('Date', t.date) +
+        detailItem('Type', t.transactionType) +
+        detailItem('Status', t.paymentStatus) +
+      '</div>' +
+      '<div class="amount-summary">' +
+        amountBox('Amount', t.amount) + amountBox('Received', t.receivedAmount) + amountBox('Paid', t.paidAmount) +
+      '</div>' +
+      '<div style="text-align:center;margin-bottom:10px;">Balance: <b>' + money(t.balanceAmount) + '</b></div>' +
+      '<div id="fullDetail-' + txnRowId + '" class="hidden">' +
+        '<div class="detail-grid">' +
+          detailItem('Customer', t.customerName) +
+          detailItem('Customer ID', t.customerId) +
+          detailItem('Scheme / Reg. ID', (t.schemeId || t.regularTransactionId || '-') + (t.registrationId ? ' / ' + t.registrationId : '')) +
+          detailItem('Payment Type', t.paymentType || '-') +
+        '</div>' +
+        '<div class="detail-item" style="margin-bottom:10px;"><div class="k">Description</div><div class="v" style="font-weight:500;">' + esc(t.description || '-') + '</div></div>' +
+        itemsHtml +
+      '</div>' +
+      '<div class="ledger-txn-actions">' +
+        '<button class="btn btn-ghost" onclick="toggleFullTxnDetail(\'' + txnRowId + '\', this)">View Full Details</button>' +
+        '<button class="btn btn-secondary" onclick="printStatement()">Print Transaction</button>' +
+      '</div>' +
+    '</div>';
+}
+
+function toggleFullTxnDetail(txnRowId, btn){
+  const el = q('#fullDetail-' + txnRowId);
+  if(!el) return;
+  const isHidden = el.classList.contains('hidden');
+  el.classList.toggle('hidden');
+  btn.textContent = isHidden ? 'Hide Full Details' : 'View Full Details';
+}
+
+/* =========================================================
+   REGULAR TRANSACTIONS
+========================================================= */
+function renderRegular(){
+  const main = q('#mainContent');
+  main.innerHTML =
+    '<div class="page-header"><div><h2>Regular Transactions</h2><p>Transactions not linked to any scheme.</p></div></div>' +
+    '<div class="card"><div class="table-scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Amount</th><th>Balance</th><th>Status</th></tr></thead><tbody id="regularBody"><tr><td colspan="6">' + skRows(4) + '</td></tr></tbody></table></div>' +
+    '<div class="txn-cards" id="regularCards"></div></div>';
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      const body = q('#regularBody'); const cards = q('#regularCards');
+      if(!res.items.length){ body.innerHTML = '<tr><td colspan="6">' + emptyState('No regular transactions found.') + '</td></tr>'; return; }
+      body.innerHTML = res.items.map(function(t){
+        return '<tr onclick="openTransactionDetail(\'' + esc(t.refNo) + '\')"><td>' + esc(t.date) + '</td><td>' + esc(t.transactionType) + '</td><td>#' + esc(t.refNo) + '</td><td>' + money(t.amount) + '</td><td>' + money(t.balanceAmount) + '</td><td>' + statusBadge(t.paymentStatus) + '</td></tr>';
+      }).join('');
+      cards.innerHTML = res.items.map(function(t){
+        return '<div class="txn-card" onclick="openTransactionDetail(\'' + esc(t.refNo) + '\')"><div class="row1"><span class="ttype">' + esc(t.transactionType) + '</span><span class="date">' + esc(t.date) + '</span></div><div class="row2"><span class="amt">' + money(t.amount) + '</span>' + statusBadge(t.paymentStatus) + '</div><div class="desc">#' + esc(t.refNo) + '</div></div>';
+      }).join('');
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Could not load transactions.', 'err'); })
+    .apiGetRegularTransactions(STATE.token);
+}
+
+/* =========================================================
+   PROFILE
+========================================================= */
+function renderProfile(){
+  const main = q('#mainContent');
+  main.innerHTML =
+    '<div class="page-header"><div><h2>My Profile</h2><p>Your account information.</p></div></div>' +
+    '<div class="card section-gap"><div class="card-body" id="profileBody">' + skRows(3) + '</div></div>' +
+    '<div class="card"><div class="card-header"><h3>Change Password</h3></div><div class="card-body">' +
+      '<div class="field"><label>Current Password</label><input type="password" id="curPass"></div>' +
+      '<div class="field"><label>New Password</label><input type="password" id="newPass"></div>' +
+      '<button class="btn btn-primary" onclick="changePassword()">Update Password</button>' +
+    '</div></div>';
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res.success){ q('#profileBody').innerHTML = emptyState('Profile not found.'); return; }
+      const p = res.profile;
+      q('#profileBody').innerHTML =
+        '<div class="detail-grid">' +
+        detailItem('Customer Name', p.customerName) + detailItem('Customer ID', p.customerId) +
+        detailItem('Mobile', p.mobile) + detailItem('Email', p.email) +
+        detailItem('Status', p.status) + detailItem('Last Login', p.lastLogin) +
+        '</div>';
+    })
+    .withFailureHandler(function(e){ if(String(e.message).indexOf('SESSION_EXPIRED')>-1) onSessionError(); else showToast('Could not load profile.', 'err'); })
+    .apiGetProfile(STATE.token);
+}
+
+function changePassword(){
+  const cur = q('#curPass').value, nw = q('#newPass').value;
+  if(!cur || !nw){ showToast('Fill both fields.', 'err'); return; }
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(res.success){ showToast('Password updated.', 'ok'); q('#curPass').value=''; q('#newPass').value=''; }
+      else { showToast(res.message || 'Update failed.', 'err'); }
+    })
+    .withFailureHandler(function(){ showToast('Update failed.', 'err'); })
+    .apiChangePassword(STATE.token, cur, nw);
+}
+</script>
+</body>
+</html>
