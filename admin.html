@@ -221,7 +221,6 @@
       <button class="tab-btn" data-tab="transactions" onclick="switchTab('transactions')">All Transactions</button>
       <button class="tab-btn" data-tab="payout" onclick="switchTab('payout')">Payout</button>
       <button class="tab-btn" data-tab="employees" onclick="switchTab('employees')">Employees</button>
-      <button class="tab-btn" data-tab="orders" onclick="switchTab('orders')">Orders</button>
     </div>
     <div class="main" id="mainContent"></div>
   </div>
@@ -327,7 +326,6 @@ function switchTab(tab){
   else if(tab==='transactions') renderAllTransactionsAdmin();
   else if(tab==='payout') renderPayoutAdmin();
   else if(tab==='employees') renderEmployeesAdmin(); // NEW
-  else if(tab==='orders') renderOrdersAdmin(); // NEW
 }
 
 function onAdminSessionError(){
@@ -5049,136 +5047,6 @@ function openEmployeeVisitsModal(salespersonId, name){
     })
     .withFailureHandler(function(){ q('#empVisitList').innerHTML = '<div class="empty-state">Failed to load visits.</div>'; })
     .apiAdminGetEmployeeVisits(ATOKEN, salespersonId, '', '');
-}
-
-/* ================= ORDERS (NEW) ================= */
-let ORDER_ADMIN_CACHE = [];
-
-function renderOrdersAdmin(){
-  const main = q('#mainContent');
-  main.innerHTML =
-    '<div class="page-header"><div><h2>Orders</h2><p>All orders created by employees from Customers &rarr; Action &rarr; 📦 Create Order.</p></div></div>' +
-    '<div class="filters-bar">' +
-      '<input type="text" id="orderSearch" placeholder="Search by customer, employee or order ID..." oninput="applyOrderFilters_()">' +
-      '<select id="orderStatusFilter" onchange="applyOrderFilters_()">' +
-        '<option value="">All Statuses</option>' +
-        '<option value="Placed">Placed</option>' +
-        '<option value="Pickup">Pickup</option>' +
-        '<option value="Ready">Ready</option>' +
-        '<option value="Delivered">Delivered</option>' +
-        '<option value="Mixed">Mixed</option>' +
-      '</select>' +
-    '</div>' +
-    '<div class="table-scroll" id="orderAdminList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
-  loadOrdersAdmin();
-}
-
-function loadOrdersAdmin(){
-  google.script.run
-    .withSuccessHandler(function(list){
-      console.log('apiAdminListOrders raw response:', list); // TEMP DEBUG
-      ORDER_ADMIN_CACHE = list || [];
-      paintOrdersAdminTable_(ORDER_ADMIN_CACHE);
-    })
-    .withFailureHandler(function(err){
-      console.error('apiAdminListOrders FAILED:', err); // TEMP DEBUG
-      showToast('Orders load error: ' + (err && err.message ? err.message : err), 'err');
-    })
-    .apiAdminListOrders(ATOKEN);
-}
-
-function applyOrderFilters_(){
-  const term = (q('#orderSearch').value || '').trim().toLowerCase();
-  const status = q('#orderStatusFilter').value;
-  const filtered = ORDER_ADMIN_CACHE.filter(function(o){
-    const matchesTerm = !term ||
-      String(o.customerName||'').toLowerCase().indexOf(term)!==-1 ||
-      String(o.employeeName||'').toLowerCase().indexOf(term)!==-1 ||
-      String(o.orderId||'').toLowerCase().indexOf(term)!==-1;
-    const matchesStatus = !status || o.status === status;
-    return matchesTerm && matchesStatus;
-  });
-  paintOrdersAdminTable_(filtered);
-}
-
-function paintOrdersAdminTable_(list){
-  const host = q('#orderAdminList');
-  if(!host) return;
-  if(!list.length){ host.innerHTML = '<div class="empty-state">No orders yet. Orders created by employees (Customers &rarr; 📦+ icon) will appear here.</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th>Order ID</th><th>Employee</th><th>Customer</th><th>Order Date</th><th>Items</th><th>Status</th><th style="width:100px">Action</th></tr></thead><tbody>' +
-    list.map(function(o){
-      const statusClass = o.status==='Delivered' ? 'badge-active' : (o.status==='—' ? 'badge-inactive' : 'badge-warn');
-      return '<tr><td>'+esc(o.orderId)+'</td><td>'+esc(o.employeeName)+'</td><td>'+esc(o.customerName)+'</td><td>'+esc(o.orderDate)+'</td><td>'+esc(o.itemCount)+'</td>' +
-        '<td><span class="badge '+statusClass+'">'+esc(o.status)+'</span></td>' +
-        '<td class="row-actions"><button class="icon-btn" onclick="openOrderDetailModal_(\''+esc(o.orderId)+'\')">View</button></td></tr>';
-    }).join('') + '</tbody></table>';
-}
-
-function openOrderDetailModal_(orderId){
-  q('#modalHost').innerHTML =
-    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:640px">' +
-      '<div class="modal-head"><h3>Order Detail</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
-      '<div class="modal-body" id="orderDetailBody"><div class="skeleton"></div></div>' +
-    '</div></div>';
-  google.script.run
-    .withSuccessHandler(function(res){
-      if(!res || !res.success){ q('#orderDetailBody').innerHTML = '<div class="empty-state">'+esc((res&&res.message)||'Failed to load order.')+'</div>'; return; }
-      paintOrderDetail_(res);
-    })
-    .withFailureHandler(function(){ q('#orderDetailBody').innerHTML = '<div class="empty-state">Failed to load order.</div>'; })
-    .apiAdminGetOrderDetail(ATOKEN, orderId);
-}
-
-function paintOrderDetail_(res){
-  const host = q('#orderDetailBody');
-  const statusOptions = ['Placed','Pickup','Ready','Delivered'];
-  host.innerHTML =
-    '<div class="profile-grid">' +
-      '<div class="profile-item"><div class="k">Order ID</div><div class="v">'+esc(res.orderId)+'</div></div>' +
-      '<div class="profile-item"><div class="k">Employee</div><div class="v">'+esc(res.employeeName)+'</div></div>' +
-      '<div class="profile-item"><div class="k">Customer</div><div class="v">'+esc(res.customerName)+'</div></div>' +
-      '<div class="profile-item"><div class="k">Order Date</div><div class="v">'+esc(res.orderDate)+'</div></div>' +
-    '</div>' +
-    '<div class="section-gap table-scroll"><table><thead><tr><th style="width:24px"><input type="checkbox" id="oiSelectAll" onchange="toggleAllOrderItems_(this)"></th><th>Product</th><th>Qty</th><th>Status</th></tr></thead><tbody>' +
-      res.items.map(function(it){
-        return '<tr><td><input type="checkbox" class="oiCheck" value="'+esc(it.itemId)+'"></td><td>'+esc(it.productName)+'</td><td>'+esc(it.qty)+'</td>' +
-          '<td><span class="badge '+(it.status==='Delivered'?'badge-active':'badge-warn')+'">'+esc(it.status)+'</span></td></tr>';
-      }).join('') + '</tbody></table></div>' +
-    '<div class="field section-gap"><label>Bulk Update Selected Items To</label>' +
-      '<select id="oiBulkStatus">' + statusOptions.map(function(s){ return '<option value="'+s+'">'+s+'</option>'; }).join('') + '</select> ' +
-      '<button class="btn btn-secondary" onclick="applyOrderItemsStatus_(\''+esc(res.orderId)+'\')">Update Status</button>' +
-    '</div>' +
-    '<div class="field section-gap"><label>Admin Notes</label><textarea id="orderNotesInput" rows="3" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:9px;">'+esc(res.notes)+'</textarea>' +
-      '<button class="btn btn-ghost" style="margin-top:8px;" onclick="saveOrderNotes_(\''+esc(res.orderId)+'\')">Save Notes</button>' +
-    '</div>';
-}
-
-function toggleAllOrderItems_(cb){
-  document.querySelectorAll('.oiCheck').forEach(function(el){ el.checked = cb.checked; });
-}
-
-function applyOrderItemsStatus_(orderId){
-  const ids = Array.prototype.slice.call(document.querySelectorAll('.oiCheck:checked')).map(function(el){ return el.value; });
-  if(!ids.length){ showToast('Select at least one item.', 'err'); return; }
-  const status = q('#oiBulkStatus').value;
-  google.script.run
-    .withSuccessHandler(function(res){
-      if(res && res.success){ showToast('Status updated.', 'ok'); openOrderDetailModal_(orderId); loadOrdersAdmin(); }
-      else { showToast((res && res.message) || 'Failed to update status.', 'err'); }
-    })
-    .withFailureHandler(function(){ showToast('Failed to update status.', 'err'); })
-    .apiAdminUpdateOrderItemsStatus(ATOKEN, orderId, ids, status);
-}
-
-function saveOrderNotes_(orderId){
-  const notes = q('#orderNotesInput').value;
-  google.script.run
-    .withSuccessHandler(function(res){
-      if(res && res.success){ showToast('Notes saved.', 'ok'); loadOrdersAdmin(); }
-      else { showToast((res && res.message) || 'Failed to save notes.', 'err'); }
-    })
-    .withFailureHandler(function(){ showToast('Failed to save notes.', 'err'); })
-    .apiAdminUpdateOrderNotes(ATOKEN, orderId, notes);
 }
 
 </script>
