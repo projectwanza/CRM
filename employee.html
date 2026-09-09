@@ -249,9 +249,15 @@ function enterEmployee(){
   switchEmpTab('dashboard');
 }
 
-function onEmployeeSessionError(){
-  showToast('Session expired. Please log in again.', 'err');
-  employeeLogout();
+function onEmployeeSessionError(err){
+  const msg = (err && err.message) ? err.message : String(err || 'Unknown error');
+  console.error('Employee API error:', msg); // open DevTools (F12) Console to read this
+  if (msg.indexOf('EMPLOYEE_SESSION_EXPIRED') !== -1) {
+    showToast('Session expired. Please log in again.', 'err');
+    employeeLogout();
+  } else {
+    showToast('Error: ' + msg, 'err'); // real reason, no forced logout
+  }
 }
 
 window.addEventListener('load', function(){
