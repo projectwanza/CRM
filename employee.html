@@ -916,8 +916,14 @@ function viewOrderDetail_(orderId){
       '<div class="modal-head"><h3>'+esc(o.orderNo)+'</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
       '<div class="modal-body">' +
         '<p style="margin:0 0 10px;font-size:13.5px;">Customer: <strong>'+esc(o.customerName)+'</strong> &middot; '+esc(o.orderDate)+'</p>' +
-        '<table><thead><tr><th>Product</th><th>Qty</th><th>Status</th></tr></thead><tbody>' +
-          o.items.map(function(it){ return '<tr><td>'+esc(it.productName)+'</td><td>'+it.quantity+'</td><td>'+esc(it.status)+'</td></tr>'; }).join('') +
+        '<table><thead><tr><th>Product</th><th>Qty</th><th>Remark</th><th>Status</th><th>Action</th></tr></thead><tbody>' +
+          o.items.map(function(it){
+            return '<tr><td>'+esc(it.productName)+'</td><td>'+it.quantity+'</td><td>'+esc(it.remark||'—')+'</td><td>'+esc(it.status)+'</td>' +
+              '<td>' + (String(it.status).toLowerCase()==='delivered'
+                ? '<span class="badge" style="background:#d1fae5;color:#065f46;">Delivered</span>'
+                : '<button class="icon-btn" title="Mark Delivered" onclick="markOrderItemDelivered_(\''+esc(orderId)+'\',\''+esc(it.orderItemId)+'\')">Mark Delivered</button>') +
+              '</td></tr>';
+          }).join('') +
         '</tbody></table>' +
         (o.notes ? '<p style="margin:12px 0 0;font-size:13px;color:var(--text-2);">Notes: '+esc(o.notes)+'</p>' : '') +
       '</div>' +
@@ -925,26 +931,67 @@ function viewOrderDetail_(orderId){
     '</div></div>';
 }
 
+// NEW: employee marks their own order-item as delivered.
+function markOrderItemDelivered_(orderId, orderItemId){
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(res && res.success){
+        const o = MY_ORDERS_CACHE.find(function(x){ return x.orderId===orderId; });
+        if(o){
+          const it = o.items.find(function(x){ return x.orderItemId===orderItemId; });
+          if(it) it.status = 'Delivered';
+          if(o.items.every(function(x){ return String(x.status).toLowerCase()==='delivered'; })) o.status = 'Delivered';
+        }
+        showToast('Marked as delivered.', 'ok');
+        viewOrderDetail_(orderId);
+        if(q('#ordersList')) paintMyOrdersTable_();
+      } else {
+        showToast((res && res.message) || 'Failed to update.', 'err');
+      }
+    })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeUpdateOrderItemStatus(ETOKEN, orderId, orderItemId, 'Delivered');
+}
+
 // Message MY_ORDERS_CACHE se hi banta hai - koi extra server round-trip
 // nahi (Attendance card wali stuck-button problem se bachne ke liye).
 function shareEmployeeOrderWhatsApp_(orderId){
   const o = MY_ORDERS_CACHE.find(function(x){ return x.orderId===orderId; });
   if(!o) return;
-  let msg = 'Dear Team,\nA new order has been generated.\n\n';
-  msg += '📦 ORDER DETAILS\n';
-  msg += 'Order No.: '+o.orderNo+'\n';
-  msg += 'Customer: '+o.customerName+'\n';
-  msg += 'Order Date: '+o.orderDate+'\n';
-  msg += 'Created By: '+o.employeeName+'\n\n';
-  msg += '🛒 ORDER ITEMS\n';
-  msg += o.items.map(function(it,i){ return '   '+(i+1)+'. '+it.productName+' — Qty: '+it.quantity; }).join('\n');
-  msg += '\n\n📝 Notes: '+(o.notes || '—');
-  msg += '\n\nPlease process the order accordingly.\nThank you.';
+  const DIV = '━━━━━━━━━━━━━━━━';
+  let mapsLink = '';
+  if(o.customerLatLong){
+    mapsLink = 'https://maps.google.com/?q=' + o.customerLatLong.trim();
+  }
+
+  let msg = 'Dear Team,\n*A NEW ORDER HAS BEEN GENERATED*\n\n';
+
+  msg += '*ORDER DETAILS*\n' + DIV + '\n';
+  msg += '*Order No.:* ' + o.orderNo + '\n';
+  msg += '*Customer:* ' + o.customerName + '\n';
+  if(o.customerMobile) msg += '*Mobile No.:* ' + o.customerMobile + '\n';
+  if(o.customerAddress) msg += '*Address:* ' + o.customerAddress + '\n';
+  if(mapsLink) msg += '*Location:* ' + mapsLink + '\n';
+  msg += '*Order Date:* ' + o.orderDate + '\n';
+  msg += '*Created By:* ' + o.employeeName + '\n\n';
+
+  msg += '*ORDER ITEMS*\n' + DIV + '\n';
+  msg += o.items.map(function(it,i){
+    let line = (i+1) + '. *' + it.productName + '*\n   Qty: ' + it.quantity;
+    if(it.remark) line += '\n   Remark: ' + it.remark;
+    return line;
+  }).join('\n\n');
+  msg += '\n\n';
+
+  msg += '*ORDER NOTES*\n' + DIV + '\n';
+  msg += (o.notes || 'No additional notes.') + '\n\n';
+
+  msg += 'Please process the order accordingly.\nThank you.';
   window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
 }
 
 function openCreateOrderModal_(customerId, customerName){
-  ORDER_ITEM_ROWS_ = [{ productName:'', quantity:'' }];
+  ORDER_ITEM_ROWS_ = [{ productName:'', quantity:'', remark:'' }];
   q('#modalHost').innerHTML =
     '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
       '<div class="modal-head"><h3>Create New Order</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
@@ -967,13 +1014,14 @@ function paintOrderItemRows_(){
     return '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">' +
       '<input type="text" placeholder="Product name" value="'+esc(row.productName)+'" style="flex:2" oninput="ORDER_ITEM_ROWS_['+idx+'].productName=this.value">' +
       '<input type="number" placeholder="Qty" min="1" value="'+esc(row.quantity)+'" style="flex:1" oninput="ORDER_ITEM_ROWS_['+idx+'].quantity=this.value">' +
+      '<input type="text" placeholder="Remark" value="'+esc(row.remark||"")+'" style="flex:1.5" oninput="ORDER_ITEM_ROWS_['+idx+'].remark=this.value">' +
       (ORDER_ITEM_ROWS_.length>1 ? '<button class="icon-btn" title="Remove" onclick="removeOrderItemRow_('+idx+')">&times;</button>' : '') +
     '</div>';
   }).join('');
 }
 
 function addOrderItemRow_(){
-  ORDER_ITEM_ROWS_.push({ productName:'', quantity:'' });
+  ORDER_ITEM_ROWS_.push({ productName:'', quantity:'', remark:'' });
   paintOrderItemRows_();
 }
 
@@ -984,7 +1032,7 @@ function removeOrderItemRow_(idx){
 
 function saveOrder_(customerId){
   const items = ORDER_ITEM_ROWS_
-    .map(function(r){ return { productName: (r.productName||'').trim(), quantity: Number(r.quantity)||0 }; })
+    .map(function(r){ return { productName: (r.productName||'').trim(), quantity: Number(r.quantity)||0, remark: (r.remark||'').trim() }; })
     .filter(function(r){ return r.productName && r.quantity>0; });
   if(!items.length){ showToast('Add at least one product with a quantity.', 'err'); return; }
   const btn = q('#orderSaveBtn'); btn.disabled=true; btn.textContent='Creating...';
