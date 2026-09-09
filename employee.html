@@ -438,7 +438,6 @@ function paintMyCustomers_(){
     }).join('') + '</div>';
   host.innerHTML = tableHtml + cardsHtml;
 }
-
 /* ---- Customer profile (basic info + full transaction history) ---- */
 
 function openCustomerProfile(customerId){
@@ -1051,7 +1050,7 @@ function shareEmployeeOrderWhatsApp_(orderId){
   window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
 }
 
-function openCreateOrderModal_(customerId, customerName, customerAddress, customerLatLong, customerMobile){
+function openCreateOrderModal_(customerId, customerName, customerAddress, customerLatLong){
   ORDER_ITEM_ROWS_ = [{ productName:'', quantity:'', remark:'' }];
   q('#modalHost').innerHTML =
     '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
@@ -1063,7 +1062,7 @@ function openCreateOrderModal_(customerId, customerName, customerAddress, custom
         '<div id="orderItemRows"></div>' +
         '<button class="btn btn-ghost" style="margin-top:6px;" onclick="addOrderItemRow_()">+ Add Product</button>' +
       '</div>' +
-      '<div class="modal-actions"><button class="btn btn-primary" id="orde      '<div class="modal-actions"><button class="btn btn-primary" id="orderSaveBtn" onclick="saveOrder_(\''+esc(customerId)+'\',\''+esc(customerName)+'\',\''+esc(customerAddress||'')+'\',\''+esc(customerLatLong||'')+'\',\''+esc(customerMobile||'')+'\')">Create Order</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +rSaveBtn" onclick="saveOrder_(\''+esc(customerId)+'\',\''+esc(customerName)+'\',\''+esc(customerAddress||'')+'\',\''+esc(customerLatLong||'')+'\')">Create Order</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
+      '<div class="modal-actions"><button class="btn btn-primary" id="orderSaveBtn" onclick="saveOrder_(\''+esc(customerId)+'\',\''+esc(customerName)+'\',\''+esc(customerAddress||'')+'\',\''+esc(customerLatLong||'')+'\')">Create Order</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
     '</div></div>';
   paintOrderItemRows_();
 }
@@ -1093,7 +1092,7 @@ function removeOrderItemRow_(idx){
   paintOrderItemRows_();
 }
 
-function saveOrder_(customerId, customerName, customerAddress, customerLatLong, customerMobile){
+function saveOrder_(customerId, customerName, customerAddress, customerLatLong){
   const items = ORDER_ITEM_ROWS_
     .map(function(r){ return { productName: (r.productName||'').trim(), quantity: Number(r.quantity)||0, remark: (r.remark||'').trim() }; })
     .filter(function(r){ return r.productName && r.quantity>0; });
@@ -1105,7 +1104,7 @@ function saveOrder_(customerId, customerName, customerAddress, customerLatLong, 
       if(res && res.success){
         showToast('Order '+res.orderNo+' created.', 'ok');
         if(q('#ordersList')) loadMyOrders_();
-        showOrderCreatedModal_(res.orderNo, customerName, items, customerAddress, customerLatLong, customerMobile);
+        showOrderCreatedModal_(res.orderNo, customerName, items, customerAddress, customerLatLong);
       }
       else { showToast((res && res.message) || 'Failed to create order.', 'err'); }
     })
@@ -1115,8 +1114,8 @@ function saveOrder_(customerId, customerName, customerAddress, customerLatLong, 
 
 // NEW: keeps the flow inside the same popup - shows what was just
 // created plus a WhatsApp button, so no trip to the Orders page needed.
-function showOrderCreatedModal_(orderNo, customerName, items, customerAddress, customerLatLong, customerMobile){
-  LAST_CREATED_ORDER_ = { orderNo: orderNo, customerName: customerName, items: items, orderDate: new Date().toLocaleString(), customerAddress: customerAddress||'', customerLatLong: customerLatLong||'', customerMobile: customerMobile||'' };
+function showOrderCreatedModal_(orderNo, customerName, items, customerAddress, customerLatLong){
+  LAST_CREATED_ORDER_ = { orderNo: orderNo, customerName: customerName, items: items, orderDate: new Date().toLocaleString(), customerAddress: customerAddress||'', customerLatLong: customerLatLong||'' };
   q('#modalHost').innerHTML =
     '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
       '<div class="modal-head"><h3>Order Created</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
@@ -1143,7 +1142,6 @@ function shareCreatedOrderWhatsApp_(){
   msg += '*ORDER DETAILS*\n' + DIV + '\n';
   msg += '*Order No.:* ' + o.orderNo + '\n';
   msg += '*Customer:* ' + o.customerName + '\n';
-  if(o.customerMobile) msg += '*Mobile No.:* ' + o.customerMobile + '\n';
   if(o.customerAddress) msg += '*Address:* ' + o.customerAddress + '\n';
   if(mapsLink) msg += '*Location:* ' + mapsLink + '\n';
   msg += '*Order Date:* ' + o.orderDate + '\n';
