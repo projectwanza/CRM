@@ -1092,6 +1092,9 @@ function shareCreatedOrderWhatsApp_(){
   msg += '*ORDER DETAILS*\n' + DIV + '\n';
   msg += '*Order No.:* ' + o.orderNo + '\n';
   msg += '*Customer:* ' + o.customerName + '\n';
+   if(o.customerMobile) msg += '*Mobile No.:* ' + o.customerMobile + '\n';
+  if(o.customerAddress) msg += '*Address:* ' + o.customerAddress + '\n';
+  if(mapsLink) msg += '*Location:* ' + mapsLink + '\n';
   msg += '*Order Date:* ' + o.orderDate + '\n';
   msg += '*Created By:* ' + EMP_NAME + '\n\n';
   msg += '*ORDER ITEMS*\n' + DIV + '\n';
