@@ -837,7 +837,7 @@ function doCheckIn_(){
   captureLocation_().then(function(loc){
     google.script.run
       .withSuccessHandler(function(res){
-        if(res && res.success){ showToast('Checked in.', 'ok'); loadAttendanceStatus_(); }
+        if(res && res.success){ showToast('Checked in.', 'ok'); paintAttendanceCardV2_({ checkedIn:true, checkedOut:false, checkInTime: res.checkInTime }); }
         else { showToast((res && res.message) || 'Check in failed.', 'err'); btn.disabled=false; btn.textContent='Check In'; }
       })
       .withFailureHandler(function(){ showToast('Check in failed.', 'err'); btn.disabled=false; btn.textContent='Check In'; })
