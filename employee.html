@@ -150,6 +150,7 @@
     <div class="tabs">
       <button class="tab-btn active" data-tab="dashboard" onclick="switchEmpTab('dashboard')">Dashboard</button>
       <button class="tab-btn" data-tab="customers" onclick="switchEmpTab('customers')">My Customers</button>
+      <button class="tab-btn" data-tab="orders" onclick="switchEmpTab('orders')">Orders</button>
       <button class="tab-btn" data-tab="attendance" onclick="switchEmpTab('attendance')">Attendance</button>
     </div>
     <div class="main" id="mainContent"></div>
@@ -267,6 +268,7 @@ function switchEmpTab(tab){
   document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tab')===tab); });
   if(tab==='dashboard') renderEmpDashboard();
   else if(tab==='customers') renderMyCustomers();
+  else if(tab==='orders') renderOrdersPage();
   else if(tab==='attendance') renderAttendancePage();
 }
 
@@ -374,7 +376,8 @@ function paintMyCustomers_(){
         '<td style="white-space:nowrap;">' +
           '<button class="icon-btn" title="Call" onclick="event.stopPropagation();callCustomer_(\''+esc(c.mobile||'')+'\')">📞</button> ' +
           locationBtn + ' ' +
-          '<button class="icon-btn add-visit" title="Add Visit" onclick="event.stopPropagation();openAddVisitModal(\''+cid+'\',\''+esc(c.customerName)+'\')">+</button>' +
+          '<button class="icon-btn add-visit" title="Add Visit" onclick="event.stopPropagation();openAddVisitModal(\''+cid+'\',\''+esc(c.customerName)+'\')">+</button> ' +
+          '<button class="icon-btn" title="Create Order" onclick="event.stopPropagation();openCreateOrderModal_(\''+cid+'\',\''+esc(c.customerName)+'\')">📦+</button>' +
         '</td>' +
         '<td onclick="openCustomerProfile(\''+cid+'\')" style="font-weight:700;color:'+(c.outstanding>0?'#c0392b':'#101828')+'">'+money(c.outstanding)+'</td>' +
         '<td onclick="openCustomerProfile(\''+cid+'\')">'+esc(c.lastSaleDate||'—')+'</td>' +
@@ -856,6 +859,137 @@ function doCheckOut_(){
       .withFailureHandler(function(){ showToast('Check out failed.', 'err'); btn.disabled=false; btn.textContent='Check Out'; })
       .apiEmployeeCheckOut(ETOKEN, loc.lat, loc.lng);
   });
+}
+/* ================= ORDERS (NEW) ================= */
+
+let MY_ORDERS_CACHE = [];
+let ORDER_ITEM_ROWS_ = [];
+
+function renderOrdersPage(){
+  const main = q('#mainContent');
+  main.innerHTML =
+    '<div class="page-header"><div><h2>Orders</h2><p>Orders you have created.</p></div></div>' +
+    '<div class="table-scroll" id="ordersList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+  loadMyOrders_();
+}
+
+function loadMyOrders_(){
+  google.script.run
+    .withSuccessHandler(function(res){
+      MY_ORDERS_CACHE = (res && res.success) ? res.orders : [];
+      paintMyOrdersTable_();
+    })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetMyOrders(ETOKEN);
+}
+
+function paintMyOrdersTable_(){
+  const host = q('#ordersList');
+  if(!host) return;
+  if(!MY_ORDERS_CACHE.length){ host.innerHTML = '<div class="empty-state">No orders yet. Use the 📦+ icon in My Customers to create one.</div>'; return; }
+  host.innerHTML = '<table><thead><tr><th>Order No.</th><th>Customer</th><th>Order Date</th><th>Total Items</th><th>Total Qty</th><th>Status</th><th>Action</th></tr></thead><tbody>' +
+    MY_ORDERS_CACHE.map(function(o){
+      return '<tr><td>'+esc(o.orderNo)+'</td>' +
+        '<td>'+esc(o.customerName)+'</td>' +
+        '<td>'+esc(o.orderDate)+'</td>' +
+        '<td>'+o.totalItems+'</td>' +
+        '<td>'+o.totalQty+'</td>' +
+        '<td><span class="badge">'+esc(o.status)+'</span></td>' +
+        '<td style="white-space:nowrap;">' +
+          '<button class="icon-btn" title="View" onclick="viewOrderDetail_(\''+esc(o.orderId)+'\')">View</button> ' +
+          '<button class="icon-btn" style="background:#25D366;border-color:#25D366;color:#fff" title="Share on WhatsApp" onclick="shareEmployeeOrderWhatsApp_(\''+esc(o.orderId)+'\')">🟢 WhatsApp</button>' +
+        '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+function viewOrderDetail_(orderId){
+  const o = MY_ORDERS_CACHE.find(function(x){ return x.orderId===orderId; });
+  if(!o) return;
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>'+esc(o.orderNo)+'</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 10px;font-size:13.5px;">Customer: <strong>'+esc(o.customerName)+'</strong> &middot; '+esc(o.orderDate)+'</p>' +
+        '<table><thead><tr><th>Product</th><th>Qty</th><th>Status</th></tr></thead><tbody>' +
+          o.items.map(function(it){ return '<tr><td>'+esc(it.productName)+'</td><td>'+it.quantity+'</td><td>'+esc(it.status)+'</td></tr>'; }).join('') +
+        '</tbody></table>' +
+        (o.notes ? '<p style="margin:12px 0 0;font-size:13px;color:var(--text-2);">Notes: '+esc(o.notes)+'</p>' : '') +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>' +
+    '</div></div>';
+}
+
+// Message MY_ORDERS_CACHE se hi banta hai - koi extra server round-trip
+// nahi (Attendance card wali stuck-button problem se bachne ke liye).
+function shareEmployeeOrderWhatsApp_(orderId){
+  const o = MY_ORDERS_CACHE.find(function(x){ return x.orderId===orderId; });
+  if(!o) return;
+  let msg = 'Dear Team,\nA new order has been generated.\n\n';
+  msg += '📦 ORDER DETAILS\n';
+  msg += 'Order No.: '+o.orderNo+'\n';
+  msg += 'Customer: '+o.customerName+'\n';
+  msg += 'Order Date: '+o.orderDate+'\n';
+  msg += 'Created By: '+o.employeeName+'\n\n';
+  msg += '🛒 ORDER ITEMS\n';
+  msg += o.items.map(function(it,i){ return '   '+(i+1)+'. '+it.productName+' — Qty: '+it.quantity; }).join('\n');
+  msg += '\n\n📝 Notes: '+(o.notes || '—');
+  msg += '\n\nPlease process the order accordingly.\nThank you.';
+  window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+}
+
+function openCreateOrderModal_(customerId, customerName){
+  ORDER_ITEM_ROWS_ = [{ productName:'', quantity:'' }];
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Create New Order</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<div class="field"><label>Customer Name</label><input type="text" value="'+esc(customerName)+'" disabled></div>' +
+        '<div class="field"><label>Order Date</label><input type="text" value="'+new Date().toLocaleString()+'" disabled></div>' +
+        '<label style="font-size:13px;font-weight:600;display:block;margin:10px 0 6px;">Products</label>' +
+        '<div id="orderItemRows"></div>' +
+        '<button class="btn btn-ghost" style="margin-top:6px;" onclick="addOrderItemRow_()">+ Add Product</button>' +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-primary" id="orderSaveBtn" onclick="saveOrder_(\''+esc(customerId)+'\')">Create Order</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
+    '</div></div>';
+  paintOrderItemRows_();
+}
+
+function paintOrderItemRows_(){
+  const host = q('#orderItemRows');
+  if(!host) return;
+  host.innerHTML = ORDER_ITEM_ROWS_.map(function(row, idx){
+    return '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">' +
+      '<input type="text" placeholder="Product name" value="'+esc(row.productName)+'" style="flex:2" oninput="ORDER_ITEM_ROWS_['+idx+'].productName=this.value">' +
+      '<input type="number" placeholder="Qty" min="1" value="'+esc(row.quantity)+'" style="flex:1" oninput="ORDER_ITEM_ROWS_['+idx+'].quantity=this.value">' +
+      (ORDER_ITEM_ROWS_.length>1 ? '<button class="icon-btn" title="Remove" onclick="removeOrderItemRow_('+idx+')">&times;</button>' : '') +
+    '</div>';
+  }).join('');
+}
+
+function addOrderItemRow_(){
+  ORDER_ITEM_ROWS_.push({ productName:'', quantity:'' });
+  paintOrderItemRows_();
+}
+
+function removeOrderItemRow_(idx){
+  ORDER_ITEM_ROWS_.splice(idx, 1);
+  paintOrderItemRows_();
+}
+
+function saveOrder_(customerId){
+  const items = ORDER_ITEM_ROWS_
+    .map(function(r){ return { productName: (r.productName||'').trim(), quantity: Number(r.quantity)||0 }; })
+    .filter(function(r){ return r.productName && r.quantity>0; });
+  if(!items.length){ showToast('Add at least one product with a quantity.', 'err'); return; }
+  const btn = q('#orderSaveBtn'); btn.disabled=true; btn.textContent='Creating...';
+  google.script.run
+    .withSuccessHandler(function(res){
+      btn.disabled=false; btn.textContent='Create Order';
+      if(res && res.success){ showToast('Order '+res.orderNo+' created.', 'ok'); closeModal(); if(q('#ordersList')) loadMyOrders_(); }
+      else { showToast((res && res.message) || 'Failed to create order.', 'err'); }
+    })
+    .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Create Order'; showToast('Failed to create order.', 'err'); })
+    .apiEmployeeCreateOrder(ETOKEN, customerId, items);
 }
 </script>
 </body>
