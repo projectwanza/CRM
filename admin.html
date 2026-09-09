@@ -221,6 +221,7 @@
       <button class="tab-btn" data-tab="transactions" onclick="switchTab('transactions')">All Transactions</button>
       <button class="tab-btn" data-tab="payout" onclick="switchTab('payout')">Payout</button>
       <button class="tab-btn" data-tab="employees" onclick="switchTab('employees')">Employees</button>
+      <button class="tab-btn" data-tab="orders" onclick="switchTab('orders')">Orders</button>
     </div>
     <div class="main" id="mainContent"></div>
   </div>
@@ -234,7 +235,7 @@
    If the page is hosted anywhere else (GitHub Pages etc.), it polyfills
    google.script.run so every call below keeps working unchanged. */
 (function(){
-  var GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwqY1Xy4A8UB_IhV3hxszbZuOoJT985aERQiDLoh9V-c-qnp-81Wz1gULjsMpp9txuKkA/exec';
+  var GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyZ46ohHnfmD3puFO6xXWN0HQjGypZ0PZLFMTtHY3OjUv4PEPo_-kxf2lH47q5GX4cY/exec';
 
   if (window.google && window.google.script && window.google.script.run) return;
   window.google = window.google || {};
@@ -326,6 +327,7 @@ function switchTab(tab){
   else if(tab==='transactions') renderAllTransactionsAdmin();
   else if(tab==='payout') renderPayoutAdmin();
   else if(tab==='employees') renderEmployeesAdmin(); // NEW
+  else if(tab==='orders') renderOrdersAdmin(); // NEW
 }
 
 function onAdminSessionError(){
@@ -5049,6 +5051,119 @@ function openEmployeeVisitsModal(salespersonId, name){
     .apiAdminGetEmployeeVisits(ATOKEN, salespersonId, '', '');
 }
 
+/* ================= ORDERS (NEW) ================= */
+let ORDERS_ADMIN_CACHE = [];
+const ORDER_STATUS_LIST = ['Pending','Ready','Picked Up','Delivered'];
+
+function renderOrdersAdmin(){
+  const main = q('#mainContent');
+  main.innerHTML =
+    '<div class="page-header"><div><h2>Orders</h2><p>All orders across every employee and customer.</p></div><button class="btn btn-ghost" onclick="debugFetchLive_()">Debug Fetch</button></div>' +
+    '<div class="table-scroll" id="ordersAdminList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+  loadOrdersAdmin();
+}
+
+function debugFetchLive_(){
+  google.script.run
+    .withSuccessHandler(function(res){ alert(JSON.stringify(res)); })
+    .withFailureHandler(function(err){ alert('FAILED: ' + err); })
+    .apiDebugOrdersLive();
+}
+
+function loadOrdersAdmin(){
+  google.script.run
+    .withSuccessHandler(function(res){
+      ORDERS_ADMIN_CACHE = (res && res.success) ? res.orders : [];
+      paintOrdersAdminTable_();
+    })
+    .withFailureHandler(onAdminSessionError)
+    .apiAdminGetOrders(ATOKEN);
+}
+
+function paintOrdersAdminTable_(){
+  const host = q('#ordersAdminList');
+  if(!host) return;
+  if(!ORDERS_ADMIN_CACHE.length){ host.innerHTML = '<div class="empty-state">No orders yet.</div>'; return; }
+  host.innerHTML = '<table><thead><tr><th>Order No.</th><th>Employee</th><th>Customer</th><th>Date</th><th>Items</th><th>Qty</th><th>Status</th><th>Action</th></tr></thead><tbody>' +
+    ORDERS_ADMIN_CACHE.map(function(o){
+      return '<tr><td>'+esc(o.orderNo)+'</td>' +
+        '<td>'+esc(o.employeeName)+'</td>' +
+        '<td>'+esc(o.customerName)+'</td>' +
+        '<td>'+esc(o.orderDate)+'</td>' +
+        '<td>'+o.totalItems+'</td>' +
+        '<td>'+o.totalQty+'</td>' +
+        '<td><span class="badge">'+esc(o.status)+'</span></td>' +
+        '<td class="row-actions">' +
+          '<button class="icon-btn" onclick="openOrderDetailAdmin_(\''+esc(o.orderId)+'\')">View</button> ' +
+          '<button class="icon-btn" style="background:#25D366;border-color:#25D366;color:#fff" onclick="shareAdminOrderWhatsApp_(\''+esc(o.orderId)+'\')">🟢 WhatsApp</button>' +
+        '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+function openOrderDetailAdmin_(orderId){
+  const o = ORDERS_ADMIN_CACHE.find(function(x){ return x.orderId===orderId; });
+  if(!o) return;
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:640px">' +
+      '<div class="modal-head"><h3>'+esc(o.orderNo)+'</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 10px;font-size:13.5px;">Employee: <strong>'+esc(o.employeeName)+'</strong> &middot; Customer: <strong>'+esc(o.customerName)+'</strong> &middot; '+esc(o.orderDate)+'</p>' +
+        '<table><thead><tr><th style="width:30px"></th><th>Product</th><th>Qty</th><th>Status</th></tr></thead><tbody>' +
+          o.items.map(function(it){
+            return '<tr><td><input type="checkbox" class="oiCb" value="'+esc(it.itemId)+'"></td><td>'+esc(it.productName)+'</td><td>'+it.quantity+'</td><td>'+esc(it.status)+'</td></tr>';
+          }).join('') +
+        '</tbody></table>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;">' +
+          '<select id="ordStatusSelect">' + ORDER_STATUS_LIST.map(function(s){ return '<option value="'+s+'">'+s+'</option>'; }).join('') + '</select>' +
+          '<button class="btn btn-secondary" onclick="applyOrderItemsStatus_(\''+esc(orderId)+'\')">Mark Selected</button>' +
+        '</div>' +
+        '<div class="field" style="margin-top:14px;"><label>Admin Notes</label><textarea id="ordNotes" rows="3">'+esc(o.notes||'')+'</textarea></div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-primary" onclick="saveOrderNotes_(\''+esc(orderId)+'\')">Save Notes</button>' +
+        '<button class="btn btn-ghost" onclick="closeModal()">Close</button>' +
+      '</div>' +
+    '</div></div>';
+}
+
+function applyOrderItemsStatus_(orderId){
+  const ids = Array.prototype.slice.call(document.querySelectorAll('.oiCb:checked')).map(function(cb){ return cb.value; });
+  if(!ids.length){ showToast('Select at least one item.', 'err'); return; }
+  const status = q('#ordStatusSelect').value;
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(res && res.success){ showToast('Status updated.', 'ok'); closeModal(); loadOrdersAdmin(); }
+      else { showToast((res && res.message) || 'Failed to update status.', 'err'); }
+    })
+    .withFailureHandler(function(){ showToast('Failed to update status.', 'err'); })
+    .apiAdminUpdateOrderItemsStatus(ATOKEN, orderId, ids, status);
+}
+
+function saveOrderNotes_(orderId){
+  const notes = q('#ordNotes').value.trim();
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(res && res.success){ showToast('Notes saved.', 'ok'); closeModal(); loadOrdersAdmin(); }
+      else { showToast((res && res.message) || 'Failed to save notes.', 'err'); }
+    })
+    .withFailureHandler(function(){ showToast('Failed to save notes.', 'err'); })
+    .apiAdminUpdateOrderNotes(ATOKEN, orderId, notes);
+}
+
+function shareAdminOrderWhatsApp_(orderId){
+  const o = ORDERS_ADMIN_CACHE.find(function(x){ return x.orderId===orderId; });
+  if(!o) return;
+  let msg = 'Dear Team,\nPlease find below the order update.\n\n';
+  msg += '📦 ORDER DETAILS\n';
+  msg += 'Order No.: '+o.orderNo+'\n';
+  msg += 'Customer: '+o.customerName+'\n\n';
+  msg += 'Current Status: *'+o.status+'*\n\n';
+  msg += '🛒 ORDER ITEMS\n';
+  msg += o.items.map(function(it,i){ return '   '+(i+1)+'. '+it.productName+' — Qty: '+it.quantity; }).join('\n');
+  msg += '\n\n📝 Admin Notes: '+(o.notes || '—');
+  msg += '\nThank you.';
+  window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+}
 </script>
 </body>
 </html>
