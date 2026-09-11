@@ -348,6 +348,12 @@ function renderEmpDashboard(){
 /* ================= MY CUSTOMERS ================= */
 
 let MC_DAY_FILTER = ''; // NEW - Visited Day filter chip currently active
+let MC_SORT_ = { key: null, dir: 1 }; // NEW - active column sort for My Customers
+function sortMyCustomers_(key){
+  if(MC_SORT_.key === key){ MC_SORT_.dir *= -1; } else { MC_SORT_.key = key; MC_SORT_.dir = 1; }
+  paintMyCustomers_();
+}
+function mcSortArrow_(key){ return MC_SORT_.key===key ? (MC_SORT_.dir===1?' ▲':' ▼') : ''; }
 
 function renderMyCustomers(){
   const main = q('#mainContent');
@@ -398,6 +404,14 @@ function paintMyCustomers_(){
     }
     return true;
   });
+  if(MC_SORT_.key){
+    const sk = MC_SORT_.key, sd = MC_SORT_.dir;
+    list.sort(function(a,b){
+      const va = sk==='outstanding' ? (Number(a.outstanding)||0) : sk==='lastSaleDate' ? (Number(a.lastSaleDateRaw)||0) : (Number(a.lastVisitDateRaw)||0);
+      const vb = sk==='outstanding' ? (Number(b.outstanding)||0) : sk==='lastSaleDate' ? (Number(b.lastSaleDateRaw)||0) : (Number(b.lastVisitDateRaw)||0);
+      return (va - vb) * sd;
+    });
+  }
   if(!list.length){ host.innerHTML = '<div class="empty-state">No customers found.</div>'; return; }
   // Action column moved right after Customer. Location icon only shows
   // when a saved Lat,Long OR Address exists - otherwise a "📍+ Add
@@ -413,7 +427,11 @@ function paintMyCustomers_(){
       '<button class="icon-btn" title="Create Order" onclick="event.stopPropagation();openCreateOrderModal_(\''+cid+'\',\''+esc(c.customerName)+'\',\''+esc(c.address||'')+'\',\''+esc(c.latLong||'')+'\',\''+esc(c.mobile||'')+'\')">📦+</button>';
   };
   // Desktop table (unchanged) - hidden on mobile via CSS.
-  const tableHtml = '<table><thead><tr><th>Customer</th><th style="width:104px">Action</th><th>Outstanding</th><th>Last Sale</th><th>Last Visit</th><th>Visited Day</th></tr></thead><tbody>' +
+  const tableHtml = '<table><thead><tr><th>Customer</th><th style="width:104px">Action</th>' +
+    '<th style="cursor:pointer" onclick="sortMyCustomers_(\'outstanding\')">Outstanding'+mcSortArrow_('outstanding')+'</th>' +
+    '<th style="cursor:pointer" onclick="sortMyCustomers_(\'lastSaleDate\')">Last Sale'+mcSortArrow_('lastSaleDate')+'</th>' +
+    '<th style="cursor:pointer" onclick="sortMyCustomers_(\'lastVisitDate\')">Last Visit'+mcSortArrow_('lastVisitDate')+'</th>' +
+    '<th>Visited Day</th></tr></thead><tbody>' +
     list.map(function(c){
       const cid = esc(c.customerId);
       return '<tr class="clickable"><td onclick="openCustomerProfile(\''+cid+'\')">'+esc(c.customerName)+'</td>' +
@@ -448,6 +466,19 @@ function openCustomerProfile(customerId){
       if(!res || !res.success){ showToast(res && res.message || 'Failed to load customer.', 'err'); renderMyCustomers(); return; }
       const p = res.profile;
       const txns = res.transactions || [];
+      // NEW: build a classic ledger - oldest first, running balance after
+      // every line, starting from Opening Balance. Same signed rule used
+      // everywhere else in this project (Sale: +balanceAmount, Credit
+      // Note: -amount, Payment-in: -(receivedAmount+paidAmount)).
+      const chrono = txns.slice().reverse(); // backend gives newest-first
+      let running = p.openingBalance;
+      const ledgerRows = chrono.map(function(t){
+        if(t.transactionType === 'Sale') running += (Number(t.balanceAmount)||0);
+        else if(t.transactionType === 'Credit Note') running -= (Number(t.amount)||0);
+        else if(t.transactionType === 'Payment-in') running -= ((Number(t.receivedAmount)||0) + (Number(t.paidAmount)||0));
+        return '<tr><td>'+esc(t.date)+'</td><td>'+esc(t.transactionType)+'</td><td>'+esc(t.refNo||'—')+'</td><td>'+money(t.amount)+'</td><td>'+esc(t.paymentStatus||'—')+'</td>' +
+          '<td style="font-weight:700;color:'+(running>0?'#c0392b':'#101828')+'">'+money(running)+'</td></tr>';
+      });
       main.innerHTML =
         '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Customers</button>' +
         '<div class="page-header"><div><h2>'+esc(p.customerName)+'</h2><p>'+esc(p.customerId)+'</p></div>' +
@@ -458,16 +489,16 @@ function openCustomerProfile(customerId){
           '<div class="profile-item"><div class="k">Email</div><div class="v">'+esc(p.email||'—')+'</div></div>' +
           '<div class="profile-item"><div class="k">Status</div><div class="v">'+esc(p.status||'—')+'</div></div>' +
           '<div class="profile-item"><div class="k">Opening Balance</div><div class="v">'+money(p.openingBalance)+'</div></div>' +
+          '<div class="profile-item"><div class="k">Current Balance / Outstanding</div><div class="v" style="font-weight:700;color:'+(p.outstanding>0?'#c0392b':'#101828')+'">'+money(p.outstanding)+'</div></div>' +
           '<div class="profile-item"><div class="k">Address</div><div class="v">'+esc(p.address||'—')+'</div></div>' +
           '<div class="profile-item"><div class="k">Area</div><div class="v">'+esc(p.area||'—')+'</div></div>' +
         '</div>' +
         '<div class="card section-gap">' +
           '<div class="card-header"><h3>Complete Transaction History</h3></div>' +
           '<div class="table-scroll card-body">' +
-            (txns.length ? ('<table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Amount</th><th>Status</th></tr></thead><tbody>' +
-              txns.map(function(t){
-                return '<tr><td>'+esc(t.date)+'</td><td>'+esc(t.transactionType)+'</td><td>'+esc(t.refNo||'—')+'</td><td>'+money(t.amount)+'</td><td>'+esc(t.paymentStatus||'—')+'</td></tr>';
-              }).join('') + '</tbody></table>') : '<div class="empty-state">No transactions yet.</div>') +
+            (txns.length ? ('<table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Amount</th><th>Status</th><th>Balance</th></tr></thead><tbody>' +
+              '<tr style="background:var(--neutral-bg);font-weight:600;"><td colspan="5">Opening Balance</td><td>'+money(p.openingBalance)+'</td></tr>' +
+              ledgerRows.join('') + '</tbody></table>') : '<div class="empty-state">No transactions yet.</div>') +
           '</div>' +
         '</div>';
     })
