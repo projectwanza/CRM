@@ -218,6 +218,7 @@
 let ETOKEN = sessionStorage.getItem('employee_token') || null;
 let EMP_NAME = sessionStorage.getItem('employee_name') || '';
 let MY_CUSTOMERS_CACHE = [];
+let MC_LOADED_ = false; // NEW - true after the first successful My Customers fetch
 let ATTENDANCE_TIMER_ = null;
 
 function q(sel){ return document.querySelector(sel); }
@@ -269,6 +270,7 @@ function employeeLogin(){
 function employeeLogout(){
   google.script.run.apiEmployeeLogout(ETOKEN);
   sessionStorage.clear(); ETOKEN = null; EMP_NAME = '';
+  MY_CUSTOMERS_CACHE = []; MC_LOADED_ = false; // NEW - next login fetches fresh once
   if(ATTENDANCE_TIMER_){ clearInterval(ATTENDANCE_TIMER_); ATTENDANCE_TIMER_ = null; }
   q('#appShell').style.display='none'; q('#loginScreen').style.display='flex';
 }
@@ -355,7 +357,7 @@ function sortMyCustomers_(key){
 }
 function mcSortArrow_(key){ return MC_SORT_.key===key ? (MC_SORT_.dir===1?' ▲':' ▼') : ''; }
 
-function renderMyCustomers(){
+function renderMyCustomers(forceReload){
   const main = q('#mainContent');
   main.innerHTML =
     '<div class="page-header"><div><h2>My Customers</h2><p>Customers assigned to you by Admin.</p></div>' +
@@ -365,13 +367,34 @@ function renderMyCustomers(){
     '<div id="mcDayFilters" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px;"></div>' +
     '<div class="table-scroll" id="mcList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
   MC_DAY_FILTER = '';
+  // NEW: cache hit - paint instantly, no server call, no skeleton
+  if(MC_LOADED_ && !forceReload){
+    paintMcDayFilters_();
+    paintMyCustomers_();
+    return;
+  }
   google.script.run
     .withSuccessHandler(function(list){
       MY_CUSTOMERS_CACHE = list || [];
+      MC_LOADED_ = true;
       paintMcDayFilters_();
       paintMyCustomers_();
     })
     .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetMyCustomers(ETOKEN);
+}
+
+// NEW: background re-fetch, no skeleton. Updates the cache, then repaints
+// only if the My Customers list is currently on screen.
+function refreshMyCustomersSilently_(){
+  google.script.run
+    .withSuccessHandler(function(list){
+      MY_CUSTOMERS_CACHE = list || [];
+      MC_LOADED_ = true;
+      paintMcDayFilters_();
+      paintMyCustomers_();
+    })
+    .withFailureHandler(function(err){ MC_LOADED_ = false; onEmployeeSessionError(err); })
     .apiEmployeeGetMyCustomers(ETOKEN);
 }
 
@@ -560,7 +583,7 @@ function saveNewCustomer(){
       if(res && res.success){
         showToast('Customer added: '+res.customerId, 'ok');
         closeModal();
-        renderMyCustomers();
+        renderMyCustomers(true);
       } else { showToast((res && res.message) || 'Failed to add customer.', 'err'); }
     })
     .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save'; showToast('Failed to add customer.', 'err'); })
@@ -590,7 +613,7 @@ function saveVisit_(customerId){
     google.script.run
       .withSuccessHandler(function(res){
         btn.disabled=false; btn.textContent='Save Visit';
-        if(res && res.success){ showToast('Visit logged.', 'ok'); closeModal(); }
+        if(res && res.success){ showToast('Visit logged.', 'ok'); closeModal(); refreshMyCustomersSilently_(); }
         else { showToast((res && res.message) || 'Failed to log visit.', 'err'); }
       })
       .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save Visit'; showToast('Failed to log visit.', 'err'); })
@@ -667,6 +690,7 @@ function saveCustomerContact_(customerId){
         closeModal();
         const c = MY_CUSTOMERS_CACHE.filter(function(x){ return x.customerId===customerId; })[0];
         if(c){ c.mobile=mobile; c.address=address; c.latLong=latLong; }
+        refreshMyCustomersSilently_();
         if(q('#mcList')) paintMyCustomers_();
         if(q('#mainContent') && q('#mainContent').innerHTML.indexOf(esc(customerId))>-1) openCustomerProfile(customerId);
       } else { showToast((res && res.message) || 'Failed to update.', 'err'); }
@@ -703,6 +727,7 @@ function saveVisitedDay_(customerId){
         const c = MY_CUSTOMERS_CACHE.filter(function(x){ return x.customerId===customerId; })[0];
         if(c) c.visitedDay = res.visitedDay;
         paintMyCustomers_();
+        refreshMyCustomersSilently_();
       } else { showToast((res && res.message) || 'Failed to update.', 'err'); }
     })
     .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save'; showToast('Failed to update.', 'err'); })
@@ -1134,6 +1159,7 @@ function saveOrder_(customerId, customerName, customerAddress, customerLatLong, 
       btn.disabled=false; btn.textContent='Create Order';
       if(res && res.success){
         showToast('Order '+res.orderNo+' created.', 'ok');
+        refreshMyCustomersSilently_();
         if(q('#ordersList')) loadMyOrders_();
         showOrderCreatedModal_(res.orderNo, customerName, items, customerAddress, customerLatLong, customerMobile);
       }
