@@ -221,6 +221,8 @@ let MY_CUSTOMERS_CACHE = [];
 let MC_LOADED_ = false; // NEW - true after the first successful My Customers fetch
 let MC_ADV_ = { active:false, days:15, types:[], status:'has' }; // NEW - applied Advanced Filter
 const MC_ADV_TYPES_ = [['visit','Visit'],['sale','Sale'],['payment','Payment'],['order','Order']];
+let MC_LAST_LIST_ = [];   // NEW - the customer list currently shown (used by Share)
+let MC_SHARE_MSGS_ = [];  // NEW - prepared WhatsApp message parts
 let ATTENDANCE_TIMER_ = null;
 
 function q(sel){ return document.querySelector(sel); }
@@ -273,6 +275,7 @@ function employeeLogout(){
   google.script.run.apiEmployeeLogout(ETOKEN);
   sessionStorage.clear(); ETOKEN = null; EMP_NAME = '';
   MY_CUSTOMERS_CACHE = []; MC_LOADED_ = false; // NEW - next login fetches fresh once
+  MC_LAST_LIST_ = []; MC_SHARE_MSGS_ = [];
   MC_ADV_ = { active:false, days:15, types:[], status:'has' };
   if(ATTENDANCE_TIMER_){ clearInterval(ATTENDANCE_TIMER_); ATTENDANCE_TIMER_ = null; }
   q('#appShell').style.display='none'; q('#loginScreen').style.display='flex';
@@ -443,6 +446,7 @@ function mcAdvPanelHtml_(){
     '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
       '<button class="btn btn-primary" style="width:auto;" onclick="applyMcAdvFilter_()">Search / Apply Filter</button>' +
       '<button class="btn btn-ghost" onclick="clearMcAdvFilter_()">Clear Filter</button>' +
+      '<button class="btn hidden" id="mcAdvShareBtn" title="Share filtered customers on WhatsApp" style="background:#25D366;color:#fff;" onclick="shareMcAdvFilterList_()">&#128994; Share</button>' +
     '</div>' +
   '</div>';
 }
@@ -464,10 +468,13 @@ function paintMcAdvBtn_(){
   const open = !panel.classList.contains('hidden');
   btn.innerHTML = (open ? '&#9650;' : '&#9660;') + ' Advanced Filter' +
     (MC_ADV_.active ? ' <span style="background:var(--primary-accent);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;margin-left:4px;">ON</span>' : '');
+  const shareBtn = q('#mcAdvShareBtn');
+  if(shareBtn) shareBtn.classList.toggle('hidden', !MC_ADV_.active);
   if(!sum) return;
   if(MC_ADV_.active){
     sum.innerHTML = '<strong>Filter:</strong> ' + mcAdvSummaryText_() +
-      ' <a href="#" onclick="clearMcAdvFilter_();return false;" style="margin-left:12px;font-weight:600;">Clear</a>';
+      ' <a href="#" onclick="clearMcAdvFilter_();return false;" style="margin-left:12px;font-weight:600;">Clear</a>' +
+      ' <a href="#" onclick="shareMcAdvFilterList_();return false;" style="margin-left:12px;font-weight:600;color:#128c4a;">Share</a>';
     sum.classList.remove('hidden');
   } else { sum.classList.add('hidden'); sum.innerHTML = ''; }
 }
@@ -501,6 +508,106 @@ function mcAdvMatch_(c){
   return MC_ADV_.status==='has' ? hasAny : !hasAny;
 }
 
+/* ================= SHARE FILTERED CUSTOMER LIST (WhatsApp) ================= */
+
+const MC_MON_ = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MC_ADV_LABELS_ = { visit:'Last Visit Logged', sale:'Last Sale', payment:'Last Payment', order:'Last Order' };
+const MC_ADV_RAWKEY_ = { visit:'lastLogVisitRaw', sale:'lastSaleDateRaw', payment:'lastPaymentDateRaw', order:'lastOrderDateRaw' };
+
+function mcFmtDate_(ms){
+  const d = new Date(ms);
+  return ('0'+d.getDate()).slice(-2) + ' ' + MC_MON_[d.getMonth()] + ' ' + d.getFullYear();
+}
+function mcDaysSince_(ms){
+  const t = new Date(); t.setHours(0,0,0,0);
+  const d = new Date(ms); d.setHours(0,0,0,0);
+  return Math.max(0, Math.round((t.getTime() - d.getTime()) / 86400000));
+}
+function mcAgo_(n){ return n===0 ? 'Today' : n + (n===1 ? ' day ago' : ' days ago'); }
+function mcDaysText_(n){ return n===0 ? 'Today' : n + (n===1 ? ' day' : ' days'); }
+
+// Lat,Long link when valid; otherwise an address-search link; otherwise ''.
+function mcMapLink_(c){
+  if(isValidLatLong_(c.latLong)) return 'https://maps.google.com/?q=' + String(c.latLong).trim().replace(/\s+/g,'');
+  const a = String(c.address||'').trim();
+  if(a) return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(a);
+  return '';
+}
+
+// Builds one or more WhatsApp messages (split only if the list is too long for one link).
+function mcBuildSharePartsForWhatsApp_(){
+  const list = MC_LAST_LIST_ || [];
+  const DIV = '━━━━━━━━━━━━━━━━';
+  const typeNames = MC_ADV_TYPES_.filter(function(t){ return MC_ADV_.types.indexOf(t[0])>-1; }).map(function(t){ return t[1]; }).join(', ');
+  const term = q('#mcSearch') ? q('#mcSearch').value.trim() : '';
+
+  let headRest = DIV + '\n';
+  headRest += '*Filter:* ' + (MC_ADV_.status==='has' ? 'Has Activity' : 'No Activity') + ' in ' + typeNames + '\n';
+  headRest += '*Period:* Last ' + MC_ADV_.days + ' day' + (MC_ADV_.days===1 ? '' : 's') + '\n';
+  if(term) headRest += '*Search:* ' + term + '\n';
+  if(MC_DAY_FILTER) headRest += '*Visited Day:* ' + MC_DAY_FILTER + '\n';
+  headRest += '*Prepared By:* ' + EMP_NAME + '\n';
+  headRest += '*Date:* ' + mcFmtDate_(Date.now()) + '\n';
+  headRest += '*Total Customers:* ' + list.length + '\n' + DIV + '\n\n';
+  const foot = '\nPlease follow up with the above customers accordingly.\nThank you.';
+
+  const blocks = list.map(function(c, i){
+    let b = '*' + (i+1) + '. ' + c.customerName + '*\n';
+    b += '*Address:* ' + (String(c.address||'').trim() || 'Not available') + '\n';
+    b += '*Location:* ' + (mcMapLink_(c) || 'Not available') + '\n';
+    let latest = 0;
+    MC_ADV_.types.forEach(function(t){
+      const ms = Number(c[MC_ADV_RAWKEY_[t]]) || 0;
+      if(ms > latest) latest = ms;
+      b += '*' + MC_ADV_LABELS_[t] + ':* ' + (ms ? mcFmtDate_(ms) + ' (' + mcAgo_(mcDaysSince_(ms)) + ')' : 'No record') + '\n';
+    });
+    b += '*Days Since Last Activity:* ' + (latest ? mcDaysText_(mcDaysSince_(latest)) : 'No activity recorded') + '\n';
+    return b;
+  });
+
+  // Group customers so each message stays inside a safe WhatsApp link size.
+  const MAX = 5500;
+  const reserve = encodeURIComponent(headRest + foot).length + 80;
+  const groups = []; let cur = [], curLen = reserve;
+  blocks.forEach(function(b, i){
+    const l = encodeURIComponent(b + '\n').length;
+    if(cur.length && curLen + l > MAX){ groups.push(cur); cur = []; curLen = reserve; }
+    cur.push({ text: b, idx: i+1 }); curLen += l;
+  });
+  if(cur.length) groups.push(cur);
+
+  return groups.map(function(g, gi){
+    const title = '*CUSTOMER LEAD LIST' + (groups.length>1 ? ' (Part ' + (gi+1) + ' of ' + groups.length + ')' : '') + '*\n';
+    return {
+      text: title + headRest + g.map(function(x){ return x.text; }).join('\n') + foot,
+      from: g[0].idx, to: g[g.length-1].idx
+    };
+  });
+}
+
+function shareMcAdvFilterList_(){
+  if(!MC_ADV_.active){ showToast('Apply an Advanced Filter first.', 'err'); return; }
+  if(!MC_LAST_LIST_.length){ showToast('No customers to share.', 'err'); return; }
+  MC_SHARE_MSGS_ = mcBuildSharePartsForWhatsApp_();
+  if(MC_SHARE_MSGS_.length === 1){ shareMcPart_(0); return; }
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Share on WhatsApp</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 12px;font-size:13.5px;">'+MC_LAST_LIST_.length+' customers are split into '+MC_SHARE_MSGS_.length+' messages (WhatsApp link size limit). Send each part:</p>' +
+        MC_SHARE_MSGS_.map(function(m, i){
+          return '<button class="btn btn-primary" style="background:#25D366;border-color:#25D366;margin-bottom:8px;" onclick="shareMcPart_('+i+')">&#128994; Send Part '+(i+1)+' of '+MC_SHARE_MSGS_.length+' (customers '+m.from+'-'+m.to+')</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>' +
+    '</div></div>';
+}
+function shareMcPart_(i){
+  const m = MC_SHARE_MSGS_[i];
+  if(!m) return;
+  window.open('https://wa.me/?text=' + encodeURIComponent(m.text), '_blank');
+}
+
 function paintMyCustomers_(){
   const host = q('#mcList');
   if(!host) return;
@@ -524,6 +631,7 @@ function paintMyCustomers_(){
       return (va - vb) * sd;
     });
   }
+  MC_LAST_LIST_ = list; // NEW - exactly what the employee currently sees (filters + sort applied)
   if(!list.length){ host.innerHTML = '<div class="empty-state">No customers found.</div>'; return; }
   // Action column moved right after Customer. Location icon only shows
   // when a saved Lat,Long OR Address exists - otherwise a "📍+ Add
