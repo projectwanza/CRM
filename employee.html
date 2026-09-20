@@ -440,7 +440,7 @@ function paintMyCustomers_(){
   // when a saved Lat,Long OR Address exists - otherwise a "📍+ Add
   // Location" icon opens the same edit form used in the profile.
   const actionsHtml = function(c, cid){
-    const hasLocation = !!(String(c.latLong||'').trim() || String(c.address||'').trim());
+    const hasLocation = isValidLatLong_(c.latLong); // NEW: Address must NOT affect the "+" icon
     const locationBtn = hasLocation
       ? '<button class="icon-btn" title="Location" onclick="event.stopPropagation();openCustomerLocation_(\''+esc(c.latLong||'')+'\',\''+esc(c.address||'')+'\')">📍</button>'
       : '<button class="icon-btn" title="Add Location" onclick="event.stopPropagation();openCustomerContactModal_(\''+cid+'\',\''+esc(c.customerName)+'\',\''+esc(c.mobile||'')+'\',\''+esc(c.address||'')+'\',\''+esc(c.latLong||'')+'\')">📍+</button>';
@@ -541,6 +541,9 @@ function openAddCustomerModal(){
         '<div class="field"><label>Mobile Number *</label><input type="text" id="acMobile" oninput="checkAcDuplicate_()"></div>' +
         '<div class="field"><label>Email (optional)</label><input type="text" id="acEmail"></div>' +
         '<div class="field"><label>Opening Balance (optional)</label><input type="number" id="acOpening" value="0"></div>' +
+        '<div class="field"><label>Address (optional)</label><textarea id="acAddress" rows="2"></textarea></div>' +
+        '<div class="field"><label>Lat,Long (optional - more accurate than Address for the Location icon)</label><input type="text" id="acLatLong" placeholder="e.g. 22.5726,88.3639"></div>' +
+        '<button class="btn btn-ghost" style="width:100%;margin:0 0 12px;" onclick="captureAcLocation_()">📍 Use My Current Location</button>' +
         '<p style="font-size:12px;color:var(--text-2);margin:0;">This customer will be assigned to you (<strong>'+esc(EMP_NAME)+'</strong>). Admin can reassign it later.</p>' +
       '</div>' +
       '<div class="modal-actions"><button class="btn btn-primary" id="acSaveBtn" onclick="saveNewCustomer()">Save</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
@@ -569,13 +572,35 @@ function checkAcDuplicate_(){
   }, 400);
 }
 
+// NEW: strict Lat,Long check - exactly "lat,long" numbers within range.
+// Empty text, "abc", "22.57" or "22.57,abc" are all treated as missing/invalid.
+function isValidLatLong_(s){
+  const m = String(s===undefined||s===null?'':s).trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if(!m) return false;
+  const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+  return lat>=-90 && lat<=90 && lng>=-180 && lng<=180;
+}
+// NEW: "Use My Current Location" inside the Add Customer form.
+function captureAcLocation_(){
+  captureLocation_().then(function(loc){
+    if(loc.lat && loc.lng) q('#acLatLong').value = loc.lat+','+loc.lng;
+    else showToast('Could not get current location.', 'err');
+  });
+}
+
 function saveNewCustomer(){
   const name = q('#acName').value.trim();
   const mobile = q('#acMobile').value.trim();
   const email = q('#acEmail').value.trim();
   const opening = Number(q('#acOpening').value) || 0;
+  const address = q('#acAddress').value.trim();
+  let latLong = q('#acLatLong').value.trim();
   if(!name){ showToast('Customer name is required.', 'err'); return; }
   if(!mobile){ showToast('Mobile number is required.', 'err'); return; }
+  if(latLong){
+    if(!isValidLatLong_(latLong)){ showToast('Lat,Long must look like 22.5726,88.3639 (or leave it blank).', 'err'); return; }
+    latLong = latLong.replace(/\s+/g, ''); // save as clean "lat,long"
+  }
   const btn = q('#acSaveBtn'); btn.disabled=true; btn.textContent='Saving...';
   google.script.run
     .withSuccessHandler(function(res){
@@ -587,7 +612,7 @@ function saveNewCustomer(){
       } else { showToast((res && res.message) || 'Failed to add customer.', 'err'); }
     })
     .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save'; showToast('Failed to add customer.', 'err'); })
-    .apiEmployeeCreateCustomer(ETOKEN, { customerName: name, mobile: mobile, email: email, openingBalance: opening });
+    .apiEmployeeCreateCustomer(ETOKEN, { customerName: name, mobile: mobile, email: email, openingBalance: opening, address: address, latLong: latLong });
 }
 
 /* ---- Add Visit (captures live location + date/time automatically) ---- */
