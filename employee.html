@@ -219,6 +219,8 @@ let ETOKEN = sessionStorage.getItem('employee_token') || null;
 let EMP_NAME = sessionStorage.getItem('employee_name') || '';
 let MY_CUSTOMERS_CACHE = [];
 let MC_LOADED_ = false; // NEW - true after the first successful My Customers fetch
+let MC_ADV_ = { active:false, days:15, types:[], status:'has' }; // NEW - applied Advanced Filter
+const MC_ADV_TYPES_ = [['visit','Visit'],['sale','Sale'],['payment','Payment'],['order','Order']];
 let ATTENDANCE_TIMER_ = null;
 
 function q(sel){ return document.querySelector(sel); }
@@ -271,6 +273,7 @@ function employeeLogout(){
   google.script.run.apiEmployeeLogout(ETOKEN);
   sessionStorage.clear(); ETOKEN = null; EMP_NAME = '';
   MY_CUSTOMERS_CACHE = []; MC_LOADED_ = false; // NEW - next login fetches fresh once
+  MC_ADV_ = { active:false, days:15, types:[], status:'has' };
   if(ATTENDANCE_TIMER_){ clearInterval(ATTENDANCE_TIMER_); ATTENDANCE_TIMER_ = null; }
   q('#appShell').style.display='none'; q('#loginScreen').style.display='flex';
 }
@@ -363,10 +366,14 @@ function renderMyCustomers(forceReload){
     '<div class="page-header"><div><h2>My Customers</h2><p>Customers assigned to you by Admin.</p></div>' +
       '<button class="btn btn-secondary" onclick="openAddCustomerModal()">+ Add Customer</button>' +
     '</div>' +
-    '<div class="filters-bar"><input type="text" id="mcSearch" placeholder="Search customer..." oninput="paintMyCustomers_()"></div>' +
+    '<div class="filters-bar"><input type="text" id="mcSearch" placeholder="Search customer..." oninput="paintMyCustomers_()">' +
+      '<button class="btn btn-ghost" id="mcAdvBtn" style="white-space:nowrap;" onclick="toggleMcAdvPanel_()">&#9660; Advanced Filter</button></div>' +
+    mcAdvPanelHtml_() +
+    '<div id="mcAdvSummary" class="hidden" style="font-size:12.5px;color:var(--primary-accent);background:var(--primary-light);padding:8px 12px;border-radius:var(--radius-sm);margin:0 0 12px;"></div>' +
     '<div id="mcDayFilters" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px;"></div>' +
     '<div class="table-scroll" id="mcList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
   MC_DAY_FILTER = '';
+  paintMcAdvBtn_(); // NEW - reflect an already-applied Advanced Filter
   // NEW: cache hit - paint instantly, no server call, no skeleton
   if(MC_LOADED_ && !forceReload){
     paintMcDayFilters_();
@@ -414,12 +421,94 @@ function toggleMcDayFilter_(day){
   paintMyCustomers_();
 }
 
+/* ================= ADVANCED FILTER (activity within N days) ================= */
+
+function mcAdvPanelHtml_(){
+  const lbl = 'display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:6px;';
+  const chips = MC_ADV_TYPES_.map(function(t){
+    const on = MC_ADV_.types.indexOf(t[0])>-1;
+    return '<label style="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border:1.5px solid var(--border);border-radius:999px;font-size:13px;font-weight:500;cursor:pointer;background:#fff;">' +
+      '<input type="checkbox" class="mcAdvCb" value="'+t[0]+'" '+(on?'checked':'')+'> '+t[1]+'</label>';
+  }).join('');
+  return '<div id="mcAdvPanel" class="hidden" style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:0 0 12px;box-shadow:var(--shadow-sm);">' +
+    '<div style="font-size:11.5px;font-weight:700;letter-spacing:.08em;color:var(--text-2);margin-bottom:14px;">ADVANCED CUSTOMER FILTER</div>' +
+    '<div style="margin-bottom:14px;"><label style="'+lbl+'">Days</label>' +
+      '<input type="number" id="mcAdvDays" min="1" value="'+esc(MC_ADV_.days)+'" style="width:110px;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;"></div>' +
+    '<div style="margin-bottom:14px;"><label style="'+lbl+'">Activity (select one or more)</label><div style="display:flex;gap:8px;flex-wrap:wrap;">'+chips+'</div></div>' +
+    '<div style="margin-bottom:16px;"><label style="'+lbl+'">Status</label>' +
+      '<select id="mcAdvStatus" style="padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;min-width:180px;">' +
+        '<option value="has"'+(MC_ADV_.status==='has'?' selected':'')+'>Has Activity</option>' +
+        '<option value="none"'+(MC_ADV_.status==='none'?' selected':'')+'>No Activity</option>' +
+      '</select></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<button class="btn btn-primary" style="width:auto;" onclick="applyMcAdvFilter_()">Search / Apply Filter</button>' +
+      '<button class="btn btn-ghost" onclick="clearMcAdvFilter_()">Clear Filter</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function toggleMcAdvPanel_(){
+  const p = q('#mcAdvPanel'); if(!p) return;
+  p.classList.toggle('hidden');
+  paintMcAdvBtn_();
+}
+
+function mcAdvSummaryText_(){
+  const names = MC_ADV_TYPES_.filter(function(t){ return MC_ADV_.types.indexOf(t[0])>-1; }).map(function(t){ return t[1]; }).join(', ');
+  return (MC_ADV_.status==='has' ? 'Has activity' : 'No activity') + ' &middot; ' + names + ' &middot; last ' + MC_ADV_.days + ' day' + (MC_ADV_.days===1?'':'s');
+}
+
+function paintMcAdvBtn_(){
+  const btn = q('#mcAdvBtn'), panel = q('#mcAdvPanel'), sum = q('#mcAdvSummary');
+  if(!btn || !panel) return;
+  const open = !panel.classList.contains('hidden');
+  btn.innerHTML = (open ? '&#9650;' : '&#9660;') + ' Advanced Filter' +
+    (MC_ADV_.active ? ' <span style="background:var(--primary-accent);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;margin-left:4px;">ON</span>' : '');
+  if(!sum) return;
+  if(MC_ADV_.active){
+    sum.innerHTML = '<strong>Filter:</strong> ' + mcAdvSummaryText_() +
+      ' <a href="#" onclick="clearMcAdvFilter_();return false;" style="margin-left:12px;font-weight:600;">Clear</a>';
+    sum.classList.remove('hidden');
+  } else { sum.classList.add('hidden'); sum.innerHTML = ''; }
+}
+
+function applyMcAdvFilter_(){
+  const days = parseInt(q('#mcAdvDays').value, 10);
+  const types = Array.prototype.slice.call(document.querySelectorAll('.mcAdvCb:checked')).map(function(cb){ return cb.value; });
+  if(!days || days < 1){ showToast('Enter the number of days (1 or more).', 'err'); return; }
+  if(!types.length){ showToast('Select at least one activity type.', 'err'); return; }
+  MC_ADV_ = { active:true, days:days, types:types, status:q('#mcAdvStatus').value };
+  q('#mcAdvPanel').classList.add('hidden');
+  paintMcAdvBtn_();
+  paintMyCustomers_();
+}
+
+function clearMcAdvFilter_(){
+  MC_ADV_ = { active:false, days:15, types:[], status:'has' };
+  if(q('#mcAdvDays')) q('#mcAdvDays').value = 15;
+  if(q('#mcAdvStatus')) q('#mcAdvStatus').value = 'has';
+  document.querySelectorAll('.mcAdvCb').forEach(function(cb){ cb.checked = false; });
+  paintMcAdvBtn_();
+  paintMyCustomers_();
+}
+
+// HAS = any selected activity within N days; NONE = no selected activity within N days.
+function mcAdvMatch_(c){
+  const d = new Date(); d.setHours(0,0,0,0);
+  const cutoff = d.getTime() - MC_ADV_.days * 86400000;
+  const rawKey = { visit:'lastLogVisitRaw', sale:'lastSaleDateRaw', payment:'lastPaymentDateRaw', order:'lastOrderDateRaw' };
+  const hasAny = MC_ADV_.types.some(function(t){ return (Number(c[rawKey[t]])||0) >= cutoff; });
+  return MC_ADV_.status==='has' ? hasAny : !hasAny;
+}
+
 function paintMyCustomers_(){
   const host = q('#mcList');
   if(!host) return;
   const term = (q('#mcSearch')?q('#mcSearch').value:'').toLowerCase();
   const list = MY_CUSTOMERS_CACHE.filter(function(c){
     if(term && String(c.customerName||'').toLowerCase().indexOf(term)===-1 && String(c.mobile||'').indexOf(term)===-1) return false;
+    // NEW: Advanced Filter (activity within N days)
+    if(MC_ADV_.active && !mcAdvMatch_(c)) return false;
     // NEW: Visited Day chip filter
     if(MC_DAY_FILTER){
       const days = String(c.visitedDay||'').split(',').map(function(s){ return s.trim(); });
