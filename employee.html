@@ -1148,12 +1148,14 @@ function paintAttendanceCardV2_(res){
     '<button class="btn btn-primary" id="attActionBtn" style="width:100%" onclick="empCheckInV2_()">Check In</button>';
 }
 
-function fmtAmPm_(t){ // 'HH:mm:ss' -> '09:42 AM'
+function fmtAmPm_(t){ // 'HH:mm:ss' (or any string containing it) -> '09:42 AM'
   if(!t) return '—';
-  const p = t.split(':').map(Number);
-  let h = p[0]%12; if(h===0) h=12;
-  const ampm = p[0]<12 ? 'AM' : 'PM';
-  return (h<10?'0'+h:h)+':'+(p[1]<10?'0'+p[1]:p[1])+' '+ampm;
+  const m = String(t).match(/(\d{1,2}):(\d{2})/); // NEW: defensive extraction, same idea as normalizeAttTimeKey_ server-side
+  if(!m) return '—';
+  const hh = Number(m[1]), mm = Number(m[2]);
+  let h = hh % 12; if(h===0) h = 12;
+  const ampm = hh < 12 ? 'AM' : 'PM';
+  return (h<10?'0'+h:h)+':'+(mm<10?'0'+mm:mm)+' '+ampm;
 }
 
 function empCheckInV2_(){
