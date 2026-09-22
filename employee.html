@@ -1148,12 +1148,12 @@ function paintAttendanceCardV2_(res){
     '<button class="btn btn-primary" id="attActionBtn" style="width:100%" onclick="empCheckInV2_()">Check In</button>';
 }
 
-function fmtAmPm_(t){ // 'HH:mm:ss' -> '9:42 AM'
+function fmtAmPm_(t){ // 'HH:mm:ss' -> '09:42 AM'
   if(!t) return '—';
   const p = t.split(':').map(Number);
   let h = p[0]%12; if(h===0) h=12;
   const ampm = p[0]<12 ? 'AM' : 'PM';
-  return h+':'+(p[1]<10?'0'+p[1]:p[1])+' '+ampm;
+  return (h<10?'0'+h:h)+':'+(p[1]<10?'0'+p[1]:p[1])+' '+ampm;
 }
 
 function empCheckInV2_(){
