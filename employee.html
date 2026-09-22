@@ -82,6 +82,19 @@
     .attendance-card .att-timer{font-size:28px;font-weight:800;margin-bottom:14px;font-variant-numeric:tabular-nums;}
     .attendance-card .btn{padding:13px 24px;font-size:14px;min-width:160px;}
 
+    .att-day-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:10px;overflow:hidden;}
+    .att-day-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;cursor:pointer;font-weight:700;font-size:13.5px;}
+    .att-day-total{color:var(--primary-accent);}
+    .att-day-chevron{font-size:11px;color:var(--text-3);}
+    .att-day-sub{padding:0 16px 10px;margin-top:-10px;font-size:12px;color:var(--text-3);}
+    .att-day-body{max-height:0;overflow:hidden;transition:max-height .25s ease;border-top:1px solid transparent;}
+    .att-day-card .att-day-body:not([style*="max-height: 0"]){border-top:1px solid var(--border);}
+    .att-shift-row{display:flex;justify-content:space-between;gap:10px;padding:10px 16px;font-size:13px;border-bottom:1px solid var(--border);}
+    .att-shift-row:last-child{border-bottom:none;}
+    .att-shift-label{color:var(--text-2);font-weight:600;min-width:60px;}
+    .att-shift-dur{font-weight:700;}
+    .att-shift-total{background:var(--neutral-bg);font-weight:800;}
+
     .filters-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
     .filters-bar input{padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;flex:1;min-width:180px;}
 
@@ -1039,13 +1052,66 @@ function renderAttendancePage(){
     '<div class="page-header"><div><h2>🕐 Attendance</h2><p>Mark your Check In / Check Out.</p></div>' +
       '<button class="btn btn-ghost" onclick="openAttendanceHistoryModal()">📅 Attendance History</button>' +
     '</div>' +
-    '<div class="attendance-card" id="attCard"><div class="skeleton" style="height:80px"></div></div>';
+    '<div class="attendance-card" id="attCard"><div class="skeleton" style="height:80px"></div></div>' +
+    '<div class="page-header" style="margin-top:26px;"><div><h3 style="margin:0;font-size:15px;">Attendance History</h3></div></div>' +
+    '<div id="attHistoryInline"><div class="skeleton" style="height:120px"></div></div>'; // NEW - inline expandable shift history
   loadAttendanceStatus_();
+  loadAttendanceHistoryInline_(); // NEW
+}
+
+// NEW: inline "DATE | TOTAL WORKING HOURS" expandable list, separate
+// from the existing calendar modal (openAttendanceHistoryModal, untouched below).
+let ATT_HISTORY_INLINE_CACHE_ = [];
+let ATT_HISTORY_INLINE_OPEN_ = {};
+function loadAttendanceHistoryInline_(){
+  google.script.run
+    .withSuccessHandler(function(res){
+      const host = q('#attHistoryInline'); if(!host) return;
+      if(!res || !res.success){ host.innerHTML = '<div class="empty-state">Failed to load history.</div>'; return; }
+      ATT_HISTORY_INLINE_CACHE_ = res.days.filter(function(d){ return d.shiftsCount > 0; }).reverse();
+      paintAttendanceHistoryInline_();
+    })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetAttendanceHistory(ETOKEN, '');
+}
+function paintAttendanceHistoryInline_(){
+  const host = q('#attHistoryInline'); if(!host) return;
+  if(!ATT_HISTORY_INLINE_CACHE_.length){ host.innerHTML = '<div class="empty-state">No attendance recorded yet this month.</div>'; return; }
+  host.innerHTML = ATT_HISTORY_INLINE_CACHE_.map(function(d){
+    const open = !!ATT_HISTORY_INLINE_OPEN_[d.date];
+    const shiftsHtml = d.shifts.map(function(s, idx){
+      return '<div class="att-shift-row">' +
+        '<span class="att-shift-label">Shift '+(idx+1)+'</span>' +
+        '<span>'+esc(fmtAmPm_(s.checkInTime))+' &rarr; '+esc(s.checkOutTime ? fmtAmPm_(s.checkOutTime) : '—')+'</span>' +
+        '<span class="att-shift-dur">'+esc(s.duration || '—')+'</span>' +
+      '</div>';
+    }).join('');
+    return '<div class="att-day-card">' +
+      '<div class="att-day-head" onclick="toggleAttHistoryDay_(\''+d.date+'\')">' +
+        '<span>'+esc(fmtAttDateLabel_(d.date))+'</span>' +
+        '<span class="att-day-total">'+esc(d.totalWorkingHours)+'</span>' +
+        '<span class="att-day-chevron">'+(open ? '&#9650;' : '&#9660;')+'</span>' +
+      '</div>' +
+      '<div class="att-day-sub">'+d.shiftsCount+' shift'+(d.shiftsCount>1?'s':'')+'</div>' +
+      '<div class="att-day-body" style="max-height:'+(open ? '600px' : '0')+'">' + shiftsHtml +
+        '<div class="att-shift-row att-shift-total"><span>TOTAL</span><span></span><span>'+esc(d.totalWorkingHours)+'</span></div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+function toggleAttHistoryDay_(dateKey){
+  ATT_HISTORY_INLINE_OPEN_[dateKey] = !ATT_HISTORY_INLINE_OPEN_[dateKey];
+  paintAttendanceHistoryInline_();
+}
+function fmtAttDateLabel_(dk){ // 'yyyy-MM-dd' -> '22 Sep 2026'
+  const p = dk.split('-').map(Number);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return p[2] + ' ' + months[p[1]-1] + ' ' + p[0];
 }
 
 function loadAttendanceStatus_(){
   google.script.run
-    .withSuccessHandler(paintAttendanceCardV2_) // NEW rendering (see below) - old paintAttendanceCard_ is no longer called
+    .withSuccessHandler(function(res){ paintAttendanceCardV2_(res); loadAttendanceHistoryInline_(); }) // NEW: also refresh the inline history list after every check-in/out
     .withFailureHandler(onEmployeeSessionError)
     .apiEmployeeGetAttendanceStatus(ETOKEN);
 }
@@ -1059,25 +1125,27 @@ function paintAttendanceCardV2_(res){
   const card = q('#attCard');
   if(!card) return;
   if(!res){ card.innerHTML = '<div class="empty-state">Failed to load attendance.</div>'; return; }
-  if(!res.checkedIn){
+  if(!res.checkedIn && !res.shiftsCount){
     card.innerHTML =
       '<p style="text-align:center;color:var(--text-2);margin:0 0 14px;">You have not checked in today.</p>' +
       '<p style="text-align:center;font-size:22px;font-weight:700;margin:0 0 18px;letter-spacing:2px;">--:--:--</p>' +
       '<button class="btn btn-primary" id="attActionBtn" style="width:100%" onclick="empCheckInV2_()">Check In</button>';
     return;
   }
-  if(res.checkedIn && !res.checkedOut){
+  if(res.checkedIn){
     card.innerHTML =
       '<p style="text-align:center;margin:0 0 6px;"><span style="color:#16a34a;font-weight:700;">🟢 Present</span></p>' +
-      '<p style="text-align:center;color:var(--text-2);margin:0 0 18px;font-size:13px;">Check-in: '+esc(fmtAmPm_(res.checkInTime))+'</p>' +
+      '<p style="text-align:center;color:var(--text-2);margin:0 0 4px;font-size:13px;">Checked in at '+esc(fmtAmPm_(res.checkInTime))+'</p>' +
+      (res.shiftsCount>1 ? '<p style="text-align:center;color:var(--text-3);margin:0 0 18px;font-size:12px;">Shift '+res.shiftsCount+' &middot; Today so far: '+esc(res.workingHours)+'</p>' : '<div style="margin-bottom:18px;"></div>') +
       '<button class="btn btn-primary" id="attActionBtn" style="width:100%" onclick="empCheckOutV2_()">Check Out</button>';
     return;
   }
+  // CHANGED: was a dead-end summary with no button. Now allows starting
+  // the next shift, per the multi-shift requirement.
   card.innerHTML =
-    '<p style="text-align:center;margin:0 0 10px;"><span style="color:#16a34a;font-weight:700;">🟢 Present</span></p>' +
-    '<p style="text-align:center;color:var(--text-2);margin:0 0 4px;font-size:13px;">Check-in: '+esc(fmtAmPm_(res.checkInTime))+'</p>' +
-    '<p style="text-align:center;color:var(--text-2);margin:0 0 4px;font-size:13px;">Check-out: '+esc(fmtAmPm_(res.checkOutTime))+'</p>' +
-    '<p style="text-align:center;color:var(--text-1);margin:8px 0 0;font-size:13.5px;font-weight:600;">Working Hours: '+esc(res.workingHours||'—')+'</p>';
+    '<p style="text-align:center;margin:0 0 6px;"><span style="color:#16a34a;font-weight:700;">🟢 '+res.shiftsCount+' shift'+(res.shiftsCount>1?'s':'')+' today</span></p>' +
+    '<p style="text-align:center;color:var(--text-1);margin:0 0 18px;font-size:15px;font-weight:700;">Total: '+esc(res.workingHours)+'</p>' +
+    '<button class="btn btn-primary" id="attActionBtn" style="width:100%" onclick="empCheckInV2_()">Check In</button>';
 }
 
 function fmtAmPm_(t){ // 'HH:mm:ss' -> '9:42 AM'
