@@ -7,6 +7,10 @@
   <title>Employee Portal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- NEW: Shop View map - Leaflet (free, no API key) + marker clustering -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
   <style>
     :root{
       --primary:#101828; --primary-accent:#2952e3; --primary-light:#eef2ff;
@@ -146,6 +150,33 @@
       .main{padding:14px;}
       .profile-grid{grid-template-columns:1fr;}
     }
+
+    /* NEW: Shop View map */
+    .shopview-map-wrap{position:relative;width:100%;height:70vh;min-height:420px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);box-shadow:var(--shadow-sm);background:#eef0f3;}
+    .shopview-map{width:100%;height:100%;}
+    .shopview-map-wrap:fullscreen{height:100vh;border-radius:0;}
+    .shopview-map-wrap:-webkit-full-screen{height:100vh;border-radius:0;}
+    .sv-controls{position:absolute;top:12px;right:12px;z-index:500;display:flex;flex-direction:column;gap:8px;}
+    .sv-ctrl-btn{background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:12.5px;font-weight:700;box-shadow:var(--shadow-md);white-space:nowrap;}
+    .sv-ctrl-btn:hover{background:var(--primary-light);color:var(--primary-accent);}
+    .sv-legend{position:absolute;bottom:12px;left:12px;z-index:500;background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 12px;font-size:11.5px;font-weight:600;color:var(--text-2);box-shadow:var(--shadow-sm);display:flex;gap:12px;}
+    .sv-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--text-3);background:#f6f7fb;z-index:400;}
+    .sv-shop-icon{font-size:20px;line-height:1;text-align:center;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35));}
+    .sv-me-icon{font-size:24px;line-height:1;text-align:center;filter:drop-shadow(0 2px 3px rgba(0,0,0,.45));}
+    .sv-popup{font-family:'Inter',sans-serif;min-width:210px;}
+    .sv-popup-title{font-weight:800;font-size:14px;margin-bottom:6px;color:var(--primary);}
+    .sv-popup-row{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-bottom:1px dashed var(--border);}
+    .sv-popup-row .k{color:var(--text-3);font-weight:700;text-transform:uppercase;font-size:9.5px;}
+    .sv-popup-row .v{color:var(--text-1);font-weight:600;text-align:right;}
+    .sv-popup-actions{display:flex;gap:6px;margin-top:10px;}
+    .sv-popup-actions .btn{padding:7px 8px;font-size:11.5px;}
+    .marker-cluster-small,.marker-cluster-medium,.marker-cluster-large{background:rgba(41,82,227,.25);}
+    .marker-cluster-small div,.marker-cluster-medium div,.marker-cluster-large div{background:var(--primary-accent);color:#fff;font-weight:700;}
+    @media(max-width:640px){
+      .shopview-map-wrap{height:60vh;min-height:360px;}
+      .sv-controls{top:8px;right:8px;gap:6px;}
+      .sv-ctrl-btn{padding:7px 9px;font-size:11.5px;}
+    }
   </style>
 </head>
 <body>
@@ -170,6 +201,7 @@
     <div class="tabs">
       <button class="tab-btn active" data-tab="dashboard" onclick="switchEmpTab('dashboard')">Dashboard</button>
       <button class="tab-btn" data-tab="customers" onclick="switchEmpTab('customers')">My Customers</button>
+      <button class="tab-btn" data-tab="shopview" onclick="switchEmpTab('shopview')">🗺️ Shop View</button>
       <button class="tab-btn" data-tab="orders" onclick="switchEmpTab('orders')">Orders</button>
       <button class="tab-btn" data-tab="attendance" onclick="switchEmpTab('attendance')">Attendance</button>
     </div>
@@ -213,6 +245,10 @@
   window.google.script.run = makeRunner(null, null);
 })();
 </script>
+
+<!-- NEW: Shop View map libraries -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
 <script>
 let ETOKEN = sessionStorage.getItem('employee_token') || null;
@@ -278,6 +314,9 @@ function employeeLogout(){
   MC_LAST_LIST_ = []; MC_SHARE_MSGS_ = [];
   MC_ADV_ = { active:false, days:15, types:[], status:'has' };
   if(ATTENDANCE_TIMER_){ clearInterval(ATTENDANCE_TIMER_); ATTENDANCE_TIMER_ = null; }
+  // NEW - Shop View cleanup so a stale map never leaks into the next login
+  SHOP_VIEW_CACHE = []; SHOP_VIEW_LOADED_ = false;
+  if(SHOP_MAP_){ SHOP_MAP_.remove(); SHOP_MAP_ = null; }
   q('#appShell').style.display='none'; q('#loginScreen').style.display='flex';
 }
 
@@ -313,6 +352,7 @@ function switchEmpTab(tab){
   document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tab')===tab); });
   if(tab==='dashboard') renderEmpDashboard();
   else if(tab==='customers') renderMyCustomers();
+  else if(tab==='shopview') renderShopView();
   else if(tab==='orders') renderOrdersPage();
   else if(tab==='attendance') renderAttendancePage();
 }
@@ -1434,6 +1474,175 @@ function shareCreatedOrderWhatsApp_(){
   }).join('\n\n');
   msg += '\n\nPlease process the order accordingly.\nThank you.';
   window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+}
+
+/* ================= SHOP VIEW (MAP) — NEW ================= */
+
+let SHOP_VIEW_CACHE = [];
+let SHOP_VIEW_LOADED_ = false;
+let SHOP_MAP_ = null;
+let SV_CLUSTER_ = null;
+let SV_MARKERS_ = [];
+let SV_SAT_ON_ = false;
+let SV_OSM_LAYER_ = null;
+let SV_SAT_LAYER_ = null;
+let SV_ME_MARKER_ = null;
+
+function renderShopView(){
+  const main = q('#mainContent');
+  main.innerHTML =
+    '<div class="page-header"><div><h2>🗺️ Shop View</h2><p>All your customers plotted on a map.</p></div></div>' +
+    '<div class="filters-bar"><input type="text" id="svSearch" placeholder="Search customer / shop..." oninput="svFilterMarkers_()" onkeydown="if(event.key===\'Enter\')svGoToFirstMatch_()"></div>' +
+    '<div id="shopViewMapWrap" class="shopview-map-wrap">' +
+      '<div id="shopMap" class="shopview-map"></div>' +
+      '<div class="sv-controls">' +
+        '<button class="sv-ctrl-btn" id="svLayerBtn" title="Toggle Satellite" onclick="svToggleLayer_()">🛰️ Satellite</button>' +
+        '<button class="sv-ctrl-btn" title="Fit all shops" onclick="svFitAll_()">⤢ Fit All</button>' +
+        '<button class="sv-ctrl-btn" title="My current location" onclick="svLocateMe_()">📍 My Location</button>' +
+        '<button class="sv-ctrl-btn" title="Fullscreen" onclick="toggleShopMapFullscreen_()">⛶ Fullscreen</button>' +
+      '</div>' +
+      '<div class="sv-legend"><span>🔵 Shop</span><span>📍 You</span></div>' +
+      '<div id="svLoading" class="sv-loading">Loading map…</div>' +
+    '</div>' +
+    '<div id="svEmpty" class="empty-state hidden">No customers with a saved location yet. Add a Lat,Long from My Customers first.</div>';
+
+  if(SHOP_MAP_){ SHOP_MAP_.remove(); SHOP_MAP_ = null; }
+
+  if(SHOP_VIEW_LOADED_){ svInitMap_(SHOP_VIEW_CACHE); return; }
+
+  google.script.run
+    .withSuccessHandler(function(list){
+      SHOP_VIEW_CACHE = list || [];
+      SHOP_VIEW_LOADED_ = true;
+      svInitMap_(SHOP_VIEW_CACHE);
+    })
+    .withFailureHandler(function(err){
+      onEmployeeSessionError(err);
+      const el = q('#svLoading'); if(el) el.textContent = 'Failed to load map.';
+    })
+    .apiEmployeeGetShopViewCustomers(ETOKEN);
+}
+
+function svInitMap_(list){
+  const wrap = q('#shopViewMapWrap');
+  if(!wrap) return;
+  const valid = (list||[]).filter(function(c){ return typeof c.lat==='number' && typeof c.lng==='number'; });
+  const loadingEl = q('#svLoading'); if(loadingEl) loadingEl.remove();
+  if(!valid.length){
+    wrap.classList.add('hidden');
+    q('#svEmpty').classList.remove('hidden');
+    return;
+  }
+
+  SV_ME_MARKER_ = null;
+  SHOP_MAP_ = L.map('shopMap', { zoomControl:true });
+  SV_OSM_LAYER_ = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:19, attribution:'&copy; OpenStreetMap contributors'
+  }).addTo(SHOP_MAP_);
+  SV_SAT_LAYER_ = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom:19, attribution:'Tiles &copy; Esri'
+  });
+  SV_SAT_ON_ = false;
+
+  SV_CLUSTER_ = L.markerClusterGroup({ maxClusterRadius:60 });
+  SV_MARKERS_ = [];
+  valid.forEach(function(c){
+    const icon = L.divIcon({ className:'sv-shop-icon', html:'🔵', iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-10] });
+    const marker = L.marker([c.lat, c.lng], { icon:icon });
+    marker.bindPopup(svPopupHtml_(c), { maxWidth:280 });
+    marker._svData = c;
+    SV_CLUSTER_.addLayer(marker);
+    SV_MARKERS_.push(marker);
+  });
+  SHOP_MAP_.addLayer(SV_CLUSTER_);
+  svFitAll_();
+  setTimeout(function(){ if(SHOP_MAP_) SHOP_MAP_.invalidateSize(); }, 150);
+}
+
+function svPopupHtml_(c){
+  const lastOrder = c.lastSaleDate ? (money(c.lastSaleAmount)+' / '+c.lastSaleDate) : '—';
+  return '<div class="sv-popup">' +
+    '<div class="sv-popup-title">'+esc(c.customerName)+'</div>' +
+    svPopupRow_('Customer Name', c.ownerName || c.customerName || '—') +
+    svPopupRow_('Mobile', c.mobile||'—') +
+    svPopupRow_('Address', c.address||c.area||'—') +
+    (c.shopType ? svPopupRow_('Customer Type', c.shopType) : '') +
+    svPopupRow_('Last Order', lastOrder) +
+    svPopupRow_('Total Business', money(c.totalBusiness)) +
+    svPopupRow_('Outstanding', money(c.outstanding)) +
+    svPopupRow_('Last Visit', c.lastVisitDate||'—') +
+    '<div class="sv-popup-actions">' +
+      '<button class="btn btn-secondary" style="flex:1" onclick="openCustomerProfile(\''+esc(c.customerId)+'\')">View Customer</button>' +
+      '<button class="btn btn-ghost" style="flex:1" onclick="openCustomerLocation_(\''+esc(c.latLong)+'\',\''+esc(c.address||'')+'\')">Directions</button>' +
+    '</div>' +
+  '</div>';
+}
+function svPopupRow_(label, value){
+  return '<div class="sv-popup-row"><span class="k">'+esc(label)+'</span><span class="v">'+esc(value)+'</span></div>';
+}
+
+function svToggleLayer_(){
+  if(!SHOP_MAP_) return;
+  SV_SAT_ON_ = !SV_SAT_ON_;
+  if(SV_SAT_ON_){ SHOP_MAP_.removeLayer(SV_OSM_LAYER_); SHOP_MAP_.addLayer(SV_SAT_LAYER_); q('#svLayerBtn').innerHTML='🗺️ Map'; }
+  else { SHOP_MAP_.removeLayer(SV_SAT_LAYER_); SHOP_MAP_.addLayer(SV_OSM_LAYER_); q('#svLayerBtn').innerHTML='🛰️ Satellite'; }
+}
+
+function svFitAll_(){
+  if(!SHOP_MAP_ || !SV_MARKERS_.length) return;
+  const bounds = L.latLngBounds(SV_MARKERS_.map(function(m){ return m.getLatLng(); }));
+  SHOP_MAP_.fitBounds(bounds, { padding:[30,30] });
+}
+
+function svLocateMe_(){
+  if(!SHOP_MAP_) return;
+  showToast('Getting your location…');
+  captureLocation_().then(function(loc){
+    if(!loc.lat || !loc.lng){ showToast('Could not get current location.', 'err'); return; }
+    if(SV_ME_MARKER_) SHOP_MAP_.removeLayer(SV_ME_MARKER_);
+    const meIcon = L.divIcon({ className:'sv-me-icon', html:'📍', iconSize:[26,26], iconAnchor:[13,26], popupAnchor:[0,-24] });
+    SV_ME_MARKER_ = L.marker([loc.lat, loc.lng], { icon:meIcon }).addTo(SHOP_MAP_);
+    SV_ME_MARKER_.bindPopup('Your current location').openPopup();
+    SHOP_MAP_.setView([loc.lat, loc.lng], 15);
+  });
+}
+
+function toggleShopMapFullscreen_(){
+  const el = q('#shopViewMapWrap');
+  if(!el) return;
+  if(!document.fullscreenElement){
+    if(el.requestFullscreen) el.requestFullscreen();
+    else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } else {
+    if(document.exitFullscreen) document.exitFullscreen();
+    else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+}
+document.addEventListener('fullscreenchange', function(){
+  setTimeout(function(){ if(SHOP_MAP_) SHOP_MAP_.invalidateSize(); }, 120);
+});
+
+function svFilterMarkers_(){
+  if(!SHOP_MAP_ || !SV_CLUSTER_) return;
+  const term = (q('#svSearch')?q('#svSearch').value:'').trim().toLowerCase();
+  SV_CLUSTER_.clearLayers();
+  SV_MARKERS_.forEach(function(m){
+    const c = m._svData;
+    if(!term || String(c.customerName||'').toLowerCase().indexOf(term)>-1 || String(c.mobile||'').indexOf(term)>-1 || String(c.area||'').toLowerCase().indexOf(term)>-1){
+      SV_CLUSTER_.addLayer(m);
+    }
+  });
+}
+
+function svGoToFirstMatch_(){
+  const term = (q('#svSearch')?q('#svSearch').value:'').trim().toLowerCase();
+  if(!term || !SHOP_MAP_) return;
+  const found = SV_MARKERS_.find(function(m){
+    const c = m._svData;
+    return String(c.customerName||'').toLowerCase().indexOf(term)>-1 || String(c.mobile||'').indexOf(term)>-1;
+  });
+  if(found){ SHOP_MAP_.setView(found.getLatLng(), 17); found.openPopup(); }
+  else showToast('No matching shop found.', 'err');
 }
 </script>
 </body>
