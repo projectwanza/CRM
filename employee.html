@@ -325,6 +325,7 @@ function employeeLogout(){
   sessionStorage.clear(); ETOKEN = null; EMP_NAME = '';
   MY_CUSTOMERS_CACHE = []; MC_LOADED_ = false; // NEW - next login fetches fresh once
   MC_LAST_LIST_ = []; MC_SHARE_MSGS_ = [];
+  EMP_DASH_LOADED_ = false; ORDERS_LOADED_ = false; ATT_STATUS_LOADED_ = false; ATT_HIST_LOADED_ = false; // NEW
   MC_ADV_ = { active:false, days:15, types:[], status:'has' };
   if(ATTENDANCE_TIMER_){ clearInterval(ATTENDANCE_TIMER_); ATTENDANCE_TIMER_ = null; }
   // NEW - Shop View cleanup so a stale map never leaks into the next login
@@ -388,21 +389,41 @@ function captureLocation_(){
 
 /* ================= DASHBOARD ================= */
 
-function renderEmpDashboard(){
+let EMP_DASH_CACHE_ = null; // NEW
+let EMP_DASH_LOADED_ = false; // NEW
+
+function paintEmpDashboard_(res){ // NEW - split out so both the fresh-load and silent-refresh paths can call it
+  const el = q('#empStats'); if(!el) return;
+  if(!res || !res.success){ el.innerHTML = '<div class="empty-state">Failed to load dashboard.</div>'; return; }
+  el.innerHTML =
+    stat('My Customers', res.myCustomers) +
+    clickableStat_("Today's Visits", res.todaysVisits, 'openTodaysVisitsModal()') +
+    stat('Monthly Sales', money(res.monthlySales)) +
+    stat('Outstanding Due', money(res.outstandingDue));
+}
+
+function renderEmpDashboard(forceReload){
   const main = q('#mainContent');
   main.innerHTML =
     '<div class="page-header"><div><h2>Dashboard</h2><p>Your daily snapshot.</p></div></div>' +
     '<div class="stat-grid" id="empStats">' + '<div class="stat-card skeleton" style="height:70px"></div>'.repeat(4) + '</div>';
+  // NEW: cache hit - paint instantly, no visible loading, then sync in background
+  if(EMP_DASH_LOADED_ && !forceReload){
+    paintEmpDashboard_(EMP_DASH_CACHE_);
+    refreshEmpDashboardSilently_();
+    return;
+  }
   google.script.run
-    .withSuccessHandler(function(res){
-      if(!res || !res.success){ q('#empStats').innerHTML = '<div class="empty-state">Failed to load dashboard.</div>'; return; }
-      q('#empStats').innerHTML =
-        stat('My Customers', res.myCustomers) +
-        clickableStat_("Today's Visits", res.todaysVisits, 'openTodaysVisitsModal()') +
-        stat('Monthly Sales', money(res.monthlySales)) +
-        stat('Outstanding Due', money(res.outstandingDue));
-    })
+    .withSuccessHandler(function(res){ EMP_DASH_CACHE_ = res; EMP_DASH_LOADED_ = true; paintEmpDashboard_(res); })
     .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetDashboard(ETOKEN);
+}
+
+// NEW: background re-fetch, no skeleton - repaints only if Dashboard is on screen
+function refreshEmpDashboardSilently_(){
+  google.script.run
+    .withSuccessHandler(function(res){ EMP_DASH_CACHE_ = res; EMP_DASH_LOADED_ = true; if(q('#empStats')) paintEmpDashboard_(res); })
+    .withFailureHandler(function(err){ EMP_DASH_LOADED_ = false; onEmployeeSessionError(err); })
     .apiEmployeeGetDashboard(ETOKEN);
 }
 
@@ -434,6 +455,7 @@ function renderMyCustomers(forceReload){
   if(MC_LOADED_ && !forceReload){
     paintMcDayFilters_();
     paintMyCustomers_();
+    refreshMyCustomersSilently_(); // NEW: instant paint from cache, then sync latest data in the background
     return;
   }
   google.script.run
@@ -1046,7 +1068,11 @@ function paintTodaysVisits_(){
 
 /* ================= ATTENDANCE ================= */
 
-function renderAttendancePage(){
+let ATT_STATUS_CACHE_ = null; // NEW
+let ATT_STATUS_LOADED_ = false; // NEW
+let ATT_HIST_LOADED_ = false; // NEW
+
+function renderAttendancePage(forceReload){
   const main = q('#mainContent');
   main.innerHTML =
     '<div class="page-header"><div><h2>🕐 Attendance</h2><p>Mark your Check In / Check Out.</p></div>' +
@@ -1054,9 +1080,33 @@ function renderAttendancePage(){
     '</div>' +
     '<div class="attendance-card" id="attCard"><div class="skeleton" style="height:80px"></div></div>' +
     '<div class="page-header" style="margin-top:26px;"><div><h3 style="margin:0;font-size:15px;">Attendance History</h3></div></div>' +
-    '<div id="attHistoryInline"><div class="skeleton" style="height:120px"></div></div>'; // NEW - inline expandable shift history
+    '<div id="attHistoryInline"><div class="skeleton" style="height:120px"></div></div>';
+  // NEW: cache hit - paint instantly, then sync in background
+  if(ATT_STATUS_LOADED_ && ATT_HIST_LOADED_ && !forceReload){
+    paintAttendanceCardV2_(ATT_STATUS_CACHE_);
+    paintAttendanceHistoryInline_();
+    refreshAttendanceSilently_();
+    return;
+  }
   loadAttendanceStatus_();
-  loadAttendanceHistoryInline_(); // NEW
+  loadAttendanceHistoryInline_();
+}
+
+// NEW: background re-fetch for both the card and the history list, no skeleton
+function refreshAttendanceSilently_(){
+  google.script.run
+    .withSuccessHandler(function(res){ ATT_STATUS_CACHE_ = res; ATT_STATUS_LOADED_ = true; if(q('#attCard')) paintAttendanceCardV2_(res); })
+    .withFailureHandler(function(err){ ATT_STATUS_LOADED_ = false; onEmployeeSessionError(err); })
+    .apiEmployeeGetAttendanceStatus(ETOKEN);
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res || !res.success) return;
+      ATT_HISTORY_INLINE_CACHE_ = res.days.filter(function(d){ return d.shiftsCount > 0; }).reverse();
+      ATT_HIST_LOADED_ = true;
+      if(q('#attHistoryInline')) paintAttendanceHistoryInline_();
+    })
+    .withFailureHandler(function(){ ATT_HIST_LOADED_ = false; })
+    .apiEmployeeGetAttendanceHistory(ETOKEN, '');
 }
 
 // NEW: inline "DATE | TOTAL WORKING HOURS" expandable list, separate
@@ -1069,6 +1119,7 @@ function loadAttendanceHistoryInline_(){
       const host = q('#attHistoryInline'); if(!host) return;
       if(!res || !res.success){ host.innerHTML = '<div class="empty-state">Failed to load history.</div>'; return; }
       ATT_HISTORY_INLINE_CACHE_ = res.days.filter(function(d){ return d.shiftsCount > 0; }).reverse();
+      ATT_HIST_LOADED_ = true; // NEW
       paintAttendanceHistoryInline_();
     })
     .withFailureHandler(onEmployeeSessionError)
@@ -1111,7 +1162,7 @@ function fmtAttDateLabel_(dk){ // 'yyyy-MM-dd' -> '22 Sep 2026'
 
 function loadAttendanceStatus_(){
   google.script.run
-    .withSuccessHandler(function(res){ paintAttendanceCardV2_(res); loadAttendanceHistoryInline_(); }) // NEW: also refresh the inline history list after every check-in/out
+    .withSuccessHandler(function(res){ ATT_STATUS_CACHE_ = res; ATT_STATUS_LOADED_ = true; paintAttendanceCardV2_(res); loadAttendanceHistoryInline_(); }) // NEW: also refresh the inline history list after every check-in/out
     .withFailureHandler(onEmployeeSessionError)
     .apiEmployeeGetAttendanceStatus(ETOKEN);
 }
@@ -1305,11 +1356,19 @@ let MY_ORDERS_CACHE = [];
 let ORDER_ITEM_ROWS_ = [];
 let LAST_CREATED_ORDER_ = null;
 
-function renderOrdersPage(){
+let ORDERS_LOADED_ = false; // NEW
+
+function renderOrdersPage(forceReload){
   const main = q('#mainContent');
   main.innerHTML =
     '<div class="page-header"><div><h2>Orders</h2><p>Orders you have created.</p></div></div>' +
     '<div class="table-scroll" id="ordersList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+  // NEW: cache hit - paint instantly, then sync in background
+  if(ORDERS_LOADED_ && !forceReload){
+    paintMyOrdersTable_();
+    refreshMyOrdersSilently_();
+    return;
+  }
   loadMyOrders_();
 }
 
@@ -1317,9 +1376,22 @@ function loadMyOrders_(){
   google.script.run
     .withSuccessHandler(function(res){
       MY_ORDERS_CACHE = (res && res.success) ? res.orders : [];
+      ORDERS_LOADED_ = true; // NEW
       paintMyOrdersTable_();
     })
     .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetMyOrders(ETOKEN);
+}
+
+// NEW: background re-fetch, no skeleton - repaints only if Orders is on screen
+function refreshMyOrdersSilently_(){
+  google.script.run
+    .withSuccessHandler(function(res){
+      MY_ORDERS_CACHE = (res && res.success) ? res.orders : [];
+      ORDERS_LOADED_ = true;
+      if(q('#ordersList')) paintMyOrdersTable_();
+    })
+    .withFailureHandler(function(err){ ORDERS_LOADED_ = false; onEmployeeSessionError(err); })
     .apiEmployeeGetMyOrders(ETOKEN);
 }
 
