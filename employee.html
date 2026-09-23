@@ -1116,7 +1116,7 @@ let ATT_HISTORY_INLINE_OPEN_ = {};
 function loadAttendanceHistoryInline_(){
   google.script.run
     .withSuccessHandler(function(res){
-      console.log('ATT_HISTORY_RAW_DEBUG', JSON.stringify(res)); // TEMP DEBUG - remove once NaN bug is confirmed fixed
+      // debug line removed - NaN fix confirmed via redeploy
       const host = q('#attHistoryInline'); if(!host) return;
       if(!res || !res.success){ host.innerHTML = '<div class="empty-state">Failed to load history.</div>'; return; }
       ATT_HISTORY_INLINE_CACHE_ = res.days.filter(function(d){ return d.shiftsCount > 0; }).reverse();
