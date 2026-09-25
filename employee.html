@@ -794,13 +794,29 @@ function openCustomerProfile(customerId){
         return (a.rowNumber||0) - (b.rowNumber||0);
       });
       let running = p.openingBalance;
+      // NEW: proper ledger columns - Description, Debit, Credit (replaces
+      // the old single "Amount" + "Status" columns). The running-balance
+      // MATH below is 100% UNCHANGED from before (same signed rule per
+      // transaction type) - only the display is split into two columns
+      // instead of one, so Balance always agrees exactly with before.
+      function ledgerDesc_(t){
+        if(t.description) return t.description;
+        if(t.transactionType === 'Sale') return 'Sale Invoice';
+        if(t.transactionType === 'Payment-in') return 'Payment Received';
+        if(t.transactionType === 'Payment-out') return 'Payment Paid';
+        if(t.transactionType === 'Credit Note') return 'Credit Note';
+        if(t.transactionType === 'Estimate' || t.transactionType === 'Quotation') return 'Estimate / Quotation';
+        return t.transactionType || '—';
+      }
       const ledgerRows = chrono.map(function(t){
-        if(t.transactionType === 'Sale') running += (Number(t.balanceAmount)||0);
-        else if(t.transactionType === 'Credit Note') running -= (Number(t.amount)||0);
-        else if(t.transactionType === 'Payment-in') running -= ((Number(t.receivedAmount)||0) + (Number(t.paidAmount)||0));
-        else if(t.transactionType === 'Payment-out') running += ((Number(t.receivedAmount)||0) + (Number(t.paidAmount)||0));
-        // Estimate/Quotation: no-op, ₹0 effect on running balance.
-        return '<tr><td>'+esc(t.date)+'</td><td>'+esc(t.transactionType)+'</td><td>'+esc(t.refNo||'—')+'</td><td>'+money(t.amount)+'</td><td>'+esc(t.paymentStatus||'—')+'</td>' +
+        let debit = 0, credit = 0;
+        if(t.transactionType === 'Sale'){ credit = Number(t.balanceAmount)||0; running += credit; }
+        else if(t.transactionType === 'Credit Note'){ debit = Number(t.amount)||0; running -= debit; }
+        else if(t.transactionType === 'Payment-in'){ debit = (Number(t.receivedAmount)||0) + (Number(t.paidAmount)||0); running -= debit; }
+        else if(t.transactionType === 'Payment-out'){ credit = (Number(t.receivedAmount)||0) + (Number(t.paidAmount)||0); running += credit; }
+        // Estimate/Quotation: no-op, ₹0 effect on running balance - both Debit and Credit stay '—'.
+        return '<tr><td>'+esc(t.date)+'</td><td>'+esc(t.transactionType)+'</td><td>'+esc(t.refNo||'—')+'</td><td>'+esc(ledgerDesc_(t))+'</td>' +
+          '<td>'+(debit ? money(debit) : '—')+'</td><td>'+(credit ? money(credit) : '—')+'</td>' +
           '<td style="font-weight:700;color:'+(running>0?'#c0392b':'#101828')+'">'+money(running)+'</td></tr>';
       });
       main.innerHTML =
@@ -820,8 +836,8 @@ function openCustomerProfile(customerId){
         '<div class="card section-gap">' +
           '<div class="card-header"><h3>Complete Transaction History</h3></div>' +
           '<div class="table-scroll card-body">' +
-            (txns.length ? ('<table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Amount</th><th>Status</th><th>Balance</th></tr></thead><tbody>' +
-              '<tr style="background:var(--neutral-bg);font-weight:600;"><td colspan="5">Opening Balance</td><td>'+money(p.openingBalance)+'</td></tr>' +
+            (txns.length ? ('<table><thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>' +
+              '<tr style="background:var(--neutral-bg);font-weight:600;"><td colspan="6">Opening Balance</td><td>'+money(p.openingBalance)+'</td></tr>' +
               ledgerRows.join('') + '</tbody></table>') : '<div class="empty-state">No transactions yet.</div>') +
           '</div>' +
         '</div>';
