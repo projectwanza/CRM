@@ -765,12 +765,41 @@ function openCustomerProfile(customerId){
       // every line, starting from Opening Balance. Same signed rule used
       // everywhere else in this project (Sale: +balanceAmount, Credit
       // Note: -amount, Payment-in: -(receivedAmount+paidAmount)).
-      const chrono = txns.slice().reverse(); // backend gives newest-first
+      // FIX: a blind .reverse() only flips the WHOLE array - for
+      // transactions on the SAME date it also swaps their relative
+      // order, which then attaches the running Balance to the wrong
+      // row. Sort explicitly instead: oldest date first, and for a
+      // tie (same date) keep sheet entry order via rowNumber - the
+      // SAME tie-break rule runFifoEngine_ already uses - so this
+      // ledger and the FIFO bill status always agree.
+           // NEW: build a classic ledger - oldest first, running balance after
+      // every line, starting from Opening Balance. Same signed rule used
+      // everywhere else in this project (Sale: +balanceAmount, Credit
+      // Note: -amount, Payment-in: -(receivedAmount+paidAmount)), now
+      // extended with:
+      //   Payment-out -> +(receivedAmount+paidAmount) - money PAID OUT
+      //                  to the customer, mirror of Payment-in. Was
+      //                  previously unhandled and silently dropped.
+      //   Estimate/Quotation -> explicit no-op, ₹0 (only a quote).
+      // FIX: a blind .reverse() only flips the WHOLE array - for
+      // transactions on the SAME date it also swaps their relative
+      // order, attaching the running Balance to the wrong row. Sort
+      // explicitly instead: oldest date first, and for a tie (same
+      // date) keep sheet entry order via rowNumber - the SAME tie-break
+      // rule runFifoEngine_ already uses, so this ledger and the FIFO
+      // bill status always agree.
+      const chrono = txns.slice().sort(function(a, b){
+        const d = (a.dateRaw||0) - (b.dateRaw||0);
+        if (d !== 0) return d;
+        return (a.rowNumber||0) - (b.rowNumber||0);
+      });
       let running = p.openingBalance;
       const ledgerRows = chrono.map(function(t){
         if(t.transactionType === 'Sale') running += (Number(t.balanceAmount)||0);
         else if(t.transactionType === 'Credit Note') running -= (Number(t.amount)||0);
         else if(t.transactionType === 'Payment-in') running -= ((Number(t.receivedAmount)||0) + (Number(t.paidAmount)||0));
+        else if(t.transactionType === 'Payment-out') running += ((Number(t.receivedAmount)||0) + (Number(t.paidAmount)||0));
+        // Estimate/Quotation: no-op, ₹0 effect on running balance.
         return '<tr><td>'+esc(t.date)+'</td><td>'+esc(t.transactionType)+'</td><td>'+esc(t.refNo||'—')+'</td><td>'+money(t.amount)+'</td><td>'+esc(t.paymentStatus||'—')+'</td>' +
           '<td style="font-weight:700;color:'+(running>0?'#c0392b':'#101828')+'">'+money(running)+'</td></tr>';
       });
