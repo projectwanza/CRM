@@ -104,6 +104,16 @@
     .mc-slider::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.25);}
     .mc-toggle input:checked + .mc-slider{background:var(--primary-accent);}
     .mc-toggle input:checked + .mc-slider::after{transform:translateX(16px);}
+    /* NEW: Assigned Leads table + Lead details */
+    .lead-note-cell{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;color:var(--text-2);}
+    .lead-link{cursor:pointer;color:var(--primary-accent);font-weight:600;}
+    .lead-timeline{border-left:2px solid var(--border);margin-left:6px;padding-left:16px;}
+    .lead-timeline .lt-item{position:relative;margin-bottom:16px;}
+    .lead-timeline .lt-item::before{content:'';position:absolute;left:-23px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--primary-accent);}
+    .lead-timeline .lt-time{font-size:11.5px;color:var(--text-3);font-weight:700;margin-bottom:2px;}
+    .lead-timeline .lt-text{font-size:13.5px;white-space:pre-wrap;word-break:break-word;}
+    .lead-timeline .lt-by{font-size:11.5px;color:var(--text-2);margin-top:2px;}
+    .profile-grid .span2{grid-column:1 / -1;}
 
     table{width:100%;border-collapse:collapse;font-size:13px;}
     thead th{text-align:left;padding:10px 12px;color:var(--text-3);font-weight:700;text-transform:uppercase;font-size:10.5px;border-bottom:1px solid var(--border);white-space:nowrap;}
@@ -487,15 +497,202 @@ function paintMyLeads_(){
            String(l.area||'').toLowerCase().indexOf(term)!==-1;
   });
   if(!list.length){ host.innerHTML = '<div class="empty-state">No assigned leads found.</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th>Lead</th><th style="width:104px">Action</th><th>Area</th><th>Priority</th><th>Status</th><th>Lead ID</th></tr></thead><tbody>' +
+  host.innerHTML = '<table><thead><tr><th>Lead</th><th style="width:130px">Action</th><th>Area</th><th>Last Activity Date</th><th>Notes (Last Notes)</th><th>Status</th></tr></thead><tbody>' +
     list.map(function(l){
-      return '<tr><td>'+esc(l.name)+'</td>' +
+      const lid = esc(l.leadId);
+      const note = String(l.lastNote||'');
+      const shortNote = note.length > 40 ? note.substring(0,40)+'...' : note;
+      return '<tr><td class="lead-link" onclick="openLeadDetail_(\''+lid+'\')">'+esc(l.name||'—')+'</td>' +
         '<td style="white-space:nowrap;">' +
-          '<button class="icon-btn" title="Call" onclick="callCustomer_(\''+esc(l.phoneNo||'')+'\')">📞</button> ' +
-          '<button class="icon-btn" title="Location" onclick="openCustomerLocation_(\''+esc(l.latLong||'')+'\',\''+esc(l.address||'')+'\')">📍</button>' +
+          '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(l.phoneNo||'')+'\')">📞</button> ' +
+          '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\')">✏️</button> ' +
+          '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+esc(l.name||'')+'\')">+</button>' +
         '</td>' +
-        '<td>'+esc(l.area||'—')+'</td><td>'+esc(l.priority||'—')+'</td><td>'+esc(l.status||'—')+'</td><td>'+esc(l.leadId)+'</td></tr>';
+        '<td>'+esc(l.area||'—')+'</td>' +
+        '<td>'+esc(l.lastActivityDate||'—')+'</td>' +
+        '<td class="lead-note-cell" title="'+esc(note)+'" onclick="showLeadNote_(\''+lid+'\')">'+(shortNote ? esc(shortNote) : '—')+'</td>' +
+        '<td>'+esc(l.status||'—')+'</td></tr>';
     }).join('') + '</tbody></table>';
+}
+
+/* ---- NEW: Assigned Leads - call / notes / edit / details ---- */
+
+// Same dial method as callCustomer_ (tel:), but never builds an invalid URL.
+function callLead_(phone){
+  const m = String(phone||'').replace(/[^\d+]/g,'');
+  if(!m){ showToast('Phone number not available for this lead.', 'err'); return; }
+  window.location.href = 'tel:'+m;
+}
+
+function refreshMyLeadsSilently_(){
+  google.script.run
+    .withSuccessHandler(function(list){ MY_LEADS_CACHE = list || []; MY_LEADS_LOADED_ = true; paintMyLeads_(); })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetMyLeads(ETOKEN);
+}
+
+// Click / tap on the truncated note -> full latest note.
+function showLeadNote_(leadId){
+  const l = MY_LEADS_CACHE.filter(function(x){ return x.leadId === leadId; })[0];
+  if(!l || !l.lastNote){ return; }
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Latest Note</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 6px;font-size:13.5px;"><strong>'+esc(l.name)+'</strong></p>' +
+        '<p style="margin:0 0 10px;font-size:11.5px;color:var(--text-3);font-weight:700;">'+esc(l.lastActivityDate||'')+'</p>' +
+        '<div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">'+esc(l.lastNote)+'</div>' +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>' +
+    '</div></div>';
+}
+
+/* ---- Add Note (historical - every note is a NEW entry) ---- */
+let LEAD_NOTE_FROM_ = 'list'; // 'list' | 'detail'
+function openLeadNoteModal_(leadId, leadName, from){
+  LEAD_NOTE_FROM_ = from || 'list';
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Add Note</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 12px;font-size:13.5px;">Lead: <strong>'+esc(leadName)+'</strong></p>' +
+        '<div class="field"><label>Note</label><textarea id="lnText" rows="4" maxlength="1000" placeholder="e.g. Called customer, asked for price..."></textarea></div>' +
+        '<p style="font-size:12px;color:var(--text-2);margin:0;">Date and time are saved automatically. Earlier notes are never overwritten.</p>' +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-primary" id="lnSaveBtn" onclick="saveLeadNote_(\''+esc(leadId)+'\')">Save Note</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
+    '</div></div>';
+}
+function saveLeadNote_(leadId){
+  const text = q('#lnText').value.trim();
+  if(!text){ showToast('Please write a note.', 'err'); return; }
+  const btn = q('#lnSaveBtn'); btn.disabled=true; btn.textContent='Saving...';
+  google.script.run
+    .withSuccessHandler(function(res){
+      btn.disabled=false; btn.textContent='Save Note';
+      if(res && res.success){
+        showToast('Note added.', 'ok'); closeModal();
+        if(LEAD_NOTE_FROM_ === 'detail') openLeadDetail_(leadId); else refreshMyLeadsSilently_();
+      } else { showToast((res && res.message) || 'Failed to add note.', 'err'); }
+    })
+    .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save Note'; showToast('Failed to add note.', 'err'); })
+    .apiEmployeeAddLeadNote(ETOKEN, leadId, text);
+}
+
+/* ---- Edit Lead (full lead edit - updates the SAME row, Lead ID read-only) ---- */
+let LEAD_EDIT_FROM_ = 'list';
+function openLeadEditModal_(leadId, from){
+  LEAD_EDIT_FROM_ = from || 'list';
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res || !res.success){ showToast((res && res.message) || 'Could not load lead.', 'err'); return; }
+      const L = res.lead, O = res.options || {};
+      const dl = function(id, arr){ return '<datalist id="'+id+'">'+(arr||[]).map(function(v){ return '<option value="'+esc(v)+'">'; }).join('')+'</datalist>'; };
+      const inp = function(id, label, val, extra){ return '<div class="field"><label>'+label+'</label><input type="text" id="'+id+'" value="'+esc(val||'')+'" '+(extra||'')+'></div>'; };
+      q('#modalHost').innerHTML =
+        '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:560px;">' +
+          '<div class="modal-head"><h3>Edit Lead</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+          '<div class="modal-body">' +
+            inp('elId','Lead ID (read-only)',L.leadId,'readonly style="background:var(--neutral-bg);"') +
+            inp('elName','Name *',L.name) +
+            inp('elShop','Shop Original Name',L.shopOriginalName) +
+            inp('elPhone','Phone No',L.phoneNo) +
+            inp('elArea','Area',L.area) +
+            '<div class="field"><label>Address</label><textarea id="elAddress" rows="2">'+esc(L.address||'')+'</textarea></div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' + inp('elLat','Latitude',L.lat) + inp('elLng','Longitude',L.lng) + '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+              inp('elPriority','Priority',L.priority,'list="dlPriority"') + inp('elStatus','Lead Status',L.status,'list="dlStatus"') +
+            '</div>' +
+            inp('elServices','Shop Services',L.shopServices) +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+              inp('elSize','Shop Size',L.shopSize,'list="dlSize"') + inp('elVisited','Visited Day',L.visitedDay,'placeholder="e.g. Monday, Thursday"') +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+              inp('elOwner','Owner Name',L.ownerName) + inp('elOwnership','Ownership',L.ownership,'list="dlOwnership"') +
+            '</div>' +
+            '<div class="field"><label>Remark</label><textarea id="elRemark" rows="2">'+esc(L.remark||'')+'</textarea></div>' +
+            inp('elAssign','Assign Executive (read-only)',L.assignExecutive,'readonly style="background:var(--neutral-bg);"') +
+            dl('dlPriority',O.priority) + dl('dlStatus',O.status) + dl('dlSize',O.shopSize) + dl('dlOwnership',O.ownership) +
+          '</div>' +
+          '<div class="modal-actions"><button class="btn btn-primary" id="elSaveBtn" onclick="saveLeadEdit_(\''+esc(L.leadId)+'\')">Update Lead</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
+        '</div></div>';
+    })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetLeadDetail(ETOKEN, leadId);
+}
+function saveLeadEdit_(leadId){
+  const v = function(id){ return q('#'+id).value.trim(); };
+  if(!v('elName')){ showToast('Lead name is required.', 'err'); return; }
+  const btn = q('#elSaveBtn'); btn.disabled=true; btn.textContent='Saving...';
+  google.script.run
+    .withSuccessHandler(function(res){
+      btn.disabled=false; btn.textContent='Update Lead';
+      if(res && res.success){
+        showToast('Lead updated.', 'ok'); closeModal();
+        if(LEAD_EDIT_FROM_ === 'detail') openLeadDetail_(leadId); else refreshMyLeadsSilently_();
+      } else { showToast((res && res.message) || 'Failed to update lead.', 'err'); }
+    })
+    .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Update Lead'; showToast('Failed to update lead.', 'err'); })
+    .apiEmployeeUpdateLead(ETOKEN, leadId, {
+      name: v('elName'), shopOriginalName: v('elShop'), phoneNo: v('elPhone'), area: v('elArea'),
+      address: v('elAddress'), lat: v('elLat'), lng: v('elLng'), priority: v('elPriority'), status: v('elStatus'),
+      shopServices: v('elServices'), shopSize: v('elSize'), visitedDay: v('elVisited'),
+      ownerName: v('elOwner'), ownership: v('elOwnership'), remark: v('elRemark')
+    });
+}
+
+/* ---- Lead 360 details page ---- */
+function openLeadDetail_(leadId){
+  const main = q('#mainContent');
+  main.innerHTML = '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Assigned Leads</button><div class="skeleton" style="height:200px"></div>';
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(!res || !res.success){
+        main.innerHTML = '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Assigned Leads</button><div class="empty-state">'+esc((res && res.message) || 'Lead not found.')+'</div>';
+        return;
+      }
+      const L = res.lead, notes = res.notes || [];
+      const item = function(k, v, span){ return '<div class="profile-item'+(span?' span2':'')+'"><div class="k">'+k+'</div><div class="v">'+(v ? esc(v) : '—')+'</div></div>'; };
+      const lid = esc(L.leadId), nm = esc(L.name);
+      const photoHtml = /^https?:\/\//i.test(L.photo) ? '<a href="'+esc(L.photo)+'" target="_blank" rel="noopener" style="color:var(--primary-accent);">View Photo</a>' : esc(L.photo||'—');
+      const last = notes[0];
+      main.innerHTML =
+        '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Assigned Leads</button>' +
+        '<div class="page-header"><div><h2>'+nm+'</h2><p>'+lid+(L.status ? ' &middot; '+esc(L.status) : '')+'</p></div>' +
+          '<div style="display:flex;gap:8px;">' +
+            '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(L.phoneNo||'')+'\')">📞</button>' +
+            '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\',\'detail\')">✏️</button>' +
+            '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+nm+'\',\'detail\')">+</button>' +
+          '</div></div>' +
+        '<div class="card"><div class="card-header"><h3>Lead Information</h3></div><div class="card-body"><div class="profile-grid">' +
+          item('Lead ID', L.leadId) + item('Status', L.status) +
+          item('Name', L.name) + item('Shop Original Name', L.shopOriginalName) +
+          item('Owner Name', L.ownerName) + item('Ownership', L.ownership) +
+          item('Priority', L.priority) + item('Shop Size', L.shopSize) +
+          item('Shop Services', L.shopServices) + item('Visited Day', L.visitedDay) +
+          item('Remark', L.remark, true) +
+        '</div></div></div>' +
+        '<div class="card section-gap"><div class="card-header"><h3>Contact &amp; Location</h3></div><div class="card-body"><div class="profile-grid">' +
+          item('Phone No', L.phoneNo) + item('Area', L.area) +
+          item('Address', L.address, true) +
+          item('Latitude', L.lat) + item('Longitude', L.lng) +
+          '<div class="profile-item"><div class="k">Photo</div><div class="v">'+photoHtml+'</div></div>' +
+        '</div></div></div>' +
+        '<div class="card section-gap"><div class="card-header"><h3>Assignment</h3></div><div class="card-body"><div class="profile-grid">' +
+          item('Assign Executive', L.assignExecutive) + item('Lead Generated By', L.leadGenerateBy) +
+          item('Last Activity', last ? last.dateTime : '') + item('Total Notes', String(notes.length)) +
+        '</div></div></div>' +
+        '<div class="card section-gap"><div class="card-header"><h3>Notes &amp; Activity History</h3>' +
+          '<button class="btn btn-secondary" onclick="openLeadNoteModal_(\''+lid+'\',\''+nm+'\',\'detail\')">+ Add Note</button></div>' +
+          '<div class="card-body">' +
+          (notes.length
+            ? '<div class="lead-timeline">'+notes.map(function(n){
+                return '<div class="lt-item"><div class="lt-time">'+esc(n.dateTime||'—')+'</div><div class="lt-text">'+esc(n.note)+'</div>'+(n.by?'<div class="lt-by">by '+esc(n.by)+'</div>':'')+'</div>';
+              }).join('')+'</div>'
+            : '<div class="empty-state">No notes yet. Tap “+ Add Note” to log the first activity.</div>') +
+        '</div></div>';
+    })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetLeadDetail(ETOKEN, leadId);
 }
 
 function renderMyCustomers(forceReload){
