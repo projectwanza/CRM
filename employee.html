@@ -107,6 +107,14 @@
     /* NEW: Assigned Leads table + Lead details */
     .lead-note-cell{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;color:var(--text-2);}
     .lead-link{cursor:pointer;color:var(--primary-accent);font-weight:600;}
+    /* NEW: clickable Lead Status + compact dropdown */
+    .lead-status{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;border:1px solid var(--border);background:var(--neutral-bg);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;}
+    .lead-status:hover{border-color:var(--primary-accent);color:var(--primary-accent);}
+    .lead-status.saving{opacity:.7;pointer-events:none;}
+    .lead-status-menu{position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);padding:4px;min-width:170px;max-height:calc(100vh - 16px);overflow-y:auto;}
+    .lead-status-menu button{display:block;width:100%;text-align:left;background:transparent;border:none;padding:7px 12px;font-size:13px;border-radius:6px;cursor:pointer;color:inherit;}
+    .lead-status-menu button:hover{background:var(--neutral-bg);}
+    .lead-status-menu button.current{background:var(--primary-light);color:var(--primary-accent);font-weight:700;}
     .lead-timeline{border-left:2px solid var(--border);margin-left:6px;padding-left:16px;}
     .lead-timeline .lt-item{position:relative;margin-bottom:16px;}
     .lead-timeline .lt-item::before{content:'';position:absolute;left:-23px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--primary-accent);}
@@ -511,7 +519,7 @@ function paintMyLeads_(){
         '<td>'+esc(l.area||'—')+'</td>' +
         '<td>'+esc(l.lastActivityDate||'—')+'</td>' +
         '<td class="lead-note-cell" title="'+esc(note)+'" onclick="showLeadNote_(\''+lid+'\')">'+(shortNote ? esc(shortNote) : '—')+'</td>' +
-        '<td>'+esc(l.status||'—')+'</td></tr>';
+        '<td><span class="lead-status'+(l._stSaving?' saving':'')+'" title="Change status" onclick="event.stopPropagation();openLeadStatusMenu_(this,\''+lid+'\')">'+esc(leadStatusLabel_(l.status))+' <span style="font-size:9px;">&#9662;</span></span></td></tr>';
     }).join('') + '</tbody></table>';
 }
 
@@ -523,6 +531,70 @@ function callLead_(phone){
   if(!m){ showToast('Phone number not available for this lead.', 'err'); return; }
   window.location.href = 'tel:'+m;
 }
+
+/* ---- NEW: Lead Status - 14 fixed values, click to change, saved silently ---- */
+const LEAD_STATUSES_ = ['New Lead','Contacted','No Response','Follow-up','Interested','Quotation Sent','Negotiation','Order Pending','Converted','Customer','Not Interested','Wrong Number','Fake Lead','Duplicate'];
+function leadStatusLabel_(s){ const t = String(s||'').trim(); return LEAD_STATUSES_.indexOf(t) !== -1 ? t : 'Set status'; }
+function findLeadInCache_(leadId){ return MY_LEADS_CACHE.filter(function(x){ return x.leadId === leadId; })[0]; }
+
+let LS_MENU_LEAD_ = '';
+function closeLeadStatusMenu_(){
+  const m = q('#leadStatusMenu'); if(m) m.remove();
+  LS_MENU_LEAD_ = '';
+}
+function openLeadStatusMenu_(el, leadId){
+  const wasOpenFor = LS_MENU_LEAD_;
+  closeLeadStatusMenu_();
+  if(wasOpenFor === leadId) return; // tapping the same status again just closes the menu
+  const l = findLeadInCache_(leadId); if(!l) return;
+  LS_MENU_LEAD_ = leadId;
+  const cur = String(l.status||'').trim();
+  const m = document.createElement('div');
+  m.id = 'leadStatusMenu'; m.className = 'lead-status-menu';
+  m.innerHTML = LEAD_STATUSES_.map(function(s, i){
+    return '<button type="button" class="'+(s===cur?'current':'')+'" onclick="pickLeadStatus_('+i+')">'+esc(s)+'</button>';
+  }).join('');
+  document.body.appendChild(m);
+  const r = el.getBoundingClientRect();
+  const mh = m.offsetHeight, mw = m.offsetWidth;
+  let top = r.bottom + 4;
+  if(top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8));
+  m.style.top = top + 'px'; m.style.left = left + 'px';
+}
+function pickLeadStatus_(i){
+  const leadId = LS_MENU_LEAD_, status = LEAD_STATUSES_[i];
+  closeLeadStatusMenu_();
+  const l = findLeadInCache_(leadId);
+  if(!l || !status) return;
+  const prev = l.status;
+  if(String(prev||'').trim() === status) return;
+  // 1) update the screen instantly (optimistic) - no reload, no navigation
+  l.status = status; l._stSaving = true;
+  paintMyLeads_();
+  // 2) save to the Lead sheet in the background
+  google.script.run
+    .withSuccessHandler(function(res){
+      const cur = findLeadInCache_(leadId);
+      if(cur) cur._stSaving = false;
+      if(!(res && res.success)){
+        if(cur && cur.status === status) cur.status = prev;   // roll back
+        showToast((res && res.message) || 'Could not update status.', 'err');
+      }
+      paintMyLeads_();
+    })
+    .withFailureHandler(function(err){
+      const cur = findLeadInCache_(leadId);
+      if(cur){ cur._stSaving = false; if(cur.status === status) cur.status = prev; }
+      paintMyLeads_();
+      onEmployeeSessionError(err);
+    })
+    .apiEmployeeUpdateLeadStatus(ETOKEN, leadId, status);
+}
+document.addEventListener('click', function(e){ const m = q('#leadStatusMenu'); if(m && !m.contains(e.target)) closeLeadStatusMenu_(); });
+document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeLeadStatusMenu_(); });
+window.addEventListener('resize', closeLeadStatusMenu_);
+document.addEventListener('scroll', function(e){ const m = q('#leadStatusMenu'); if(m && e.target !== m && !m.contains(e.target)) closeLeadStatusMenu_(); }, true);
 
 function refreshMyLeadsSilently_(){
   google.script.run
@@ -600,7 +672,11 @@ function openLeadEditModal_(leadId, from){
             '<div class="field"><label>Address</label><textarea id="elAddress" rows="2">'+esc(L.address||'')+'</textarea></div>' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' + inp('elLat','Latitude',L.lat) + inp('elLng','Longitude',L.lng) + '</div>' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-              inp('elPriority','Priority',L.priority,'list="dlPriority"') + inp('elStatus','Lead Status',L.status,'list="dlStatus"') +
+              inp('elPriority','Priority',L.priority,'list="dlPriority"') +
+              '<div class="field"><label>Lead Status</label><select id="elStatus">' +
+                (LEAD_STATUSES_.indexOf(String(L.status||'').trim())===-1 ? '<option value="" selected>— Select status —</option>' : '') +
+                LEAD_STATUSES_.map(function(s){ return '<option value="'+esc(s)+'"'+(s===String(L.status||'').trim()?' selected':'')+'>'+esc(s)+'</option>'; }).join('') +
+              '</select></div>' +
             '</div>' +
             inp('elServices','Shop Services',L.shopServices) +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
@@ -611,7 +687,7 @@ function openLeadEditModal_(leadId, from){
             '</div>' +
             '<div class="field"><label>Remark</label><textarea id="elRemark" rows="2">'+esc(L.remark||'')+'</textarea></div>' +
             inp('elAssign','Assign Executive (read-only)',L.assignExecutive,'readonly style="background:var(--neutral-bg);"') +
-            dl('dlPriority',O.priority) + dl('dlStatus',O.status) + dl('dlSize',O.shopSize) + dl('dlOwnership',O.ownership) +
+            dl('dlPriority',O.priority) + dl('dlSize',O.shopSize) + dl('dlOwnership',O.ownership) +
           '</div>' +
           '<div class="modal-actions"><button class="btn btn-primary" id="elSaveBtn" onclick="saveLeadEdit_(\''+esc(L.leadId)+'\')">Update Lead</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
         '</div></div>';
@@ -657,14 +733,14 @@ function openLeadDetail_(leadId){
       const last = notes[0];
       main.innerHTML =
         '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Assigned Leads</button>' +
-        '<div class="page-header"><div><h2>'+nm+'</h2><p>'+lid+(L.status ? ' &middot; '+esc(L.status) : '')+'</p></div>' +
+        '<div class="page-header"><div><h2>'+nm+'</h2><p>'+lid+(LEAD_STATUSES_.indexOf(String(L.status||'').trim())!==-1 ? ' &middot; '+esc(L.status) : '')+'</p></div>' +
           '<div style="display:flex;gap:8px;">' +
             '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(L.phoneNo||'')+'\')">📞</button>' +
             '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\',\'detail\')">✏️</button>' +
             '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+nm+'\',\'detail\')">+</button>' +
           '</div></div>' +
         '<div class="card"><div class="card-header"><h3>Lead Information</h3></div><div class="card-body"><div class="profile-grid">' +
-          item('Lead ID', L.leadId) + item('Status', L.status) +
+          item('Lead ID', L.leadId) + item('Status', LEAD_STATUSES_.indexOf(String(L.status||'').trim())!==-1 ? L.status : '') +
           item('Name', L.name) + item('Shop Original Name', L.shopOriginalName) +
           item('Owner Name', L.ownerName) + item('Ownership', L.ownership) +
           item('Priority', L.priority) + item('Shop Size', L.shopSize) +
