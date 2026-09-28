@@ -97,6 +97,13 @@
 
     .filters-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
     .filters-bar input{padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;flex:1;min-width:180px;}
+    /* NEW: My Customers ON/OFF toggle */
+    .mc-toggle{position:relative;display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:11.5px;font-weight:700;letter-spacing:.4px;color:var(--text-2);user-select:none;}
+    .mc-toggle input{position:absolute;opacity:0;width:0;height:0;}
+    .mc-slider{position:relative;width:38px;height:22px;background:#cfd4dc;border-radius:22px;transition:background .2s;flex-shrink:0;}
+    .mc-slider::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.25);}
+    .mc-toggle input:checked + .mc-slider{background:var(--primary-accent);}
+    .mc-toggle input:checked + .mc-slider::after{transform:translateX(16px);}
 
     table{width:100%;border-collapse:collapse;font-size:13px;}
     thead th{text-align:left;padding:10px 12px;color:var(--text-3);font-weight:700;text-transform:uppercase;font-size:10.5px;border-bottom:1px solid var(--border);white-space:nowrap;}
@@ -437,19 +444,80 @@ function sortMyCustomers_(key){
 }
 function mcSortArrow_(key){ return MC_SORT_.key===key ? (MC_SORT_.dir===1?' ▲':' ▼') : ''; }
 
+/* ---- NEW: My Customers ON/OFF toggle (ON = Customers [default], OFF = Assigned Leads) ---- */
+let MC_MODE_ = 'customers';   // 'customers' | 'leads'
+let MY_LEADS_CACHE = [];
+let MY_LEADS_LOADED_ = false;
+
+function toggleMcMode_(on){
+  MC_MODE_ = on ? 'customers' : 'leads';
+  applyMcMode_();
+}
+function applyMcMode_(){
+  const leads = (MC_MODE_ === 'leads');
+  const cBox = q('#mcCustomerBox'), lBox = q('#mcLeadBox');
+  if(!cBox || !lBox) return;
+  cBox.classList.toggle('hidden', leads);
+  lBox.classList.toggle('hidden', !leads);
+  if(q('#mcTitle')) q('#mcTitle').textContent = leads ? 'My Assigned Leads' : 'My Customers';
+  if(q('#mcSub')) q('#mcSub').textContent = leads ? 'Leads assigned to you.' : 'Customers assigned to you by Admin.';
+  if(q('#mcToggleLbl')) q('#mcToggleLbl').textContent = leads ? 'LEADS' : 'CUSTOMERS';
+  if(q('#mcModeToggle')) q('#mcModeToggle').checked = !leads;
+  if(leads) renderMyLeads_(false);
+}
+function renderMyLeads_(forceReload){
+  const box = q('#mcLeadBox'); if(!box) return;
+  box.innerHTML =
+    '<div class="filters-bar"><input type="text" id="mlSearch" placeholder="Search lead..." oninput="paintMyLeads_()"></div>' +
+    '<div class="table-scroll" id="mlList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+  if(MY_LEADS_LOADED_ && !forceReload) paintMyLeads_();
+  google.script.run
+    .withSuccessHandler(function(list){ MY_LEADS_CACHE = list || []; MY_LEADS_LOADED_ = true; paintMyLeads_(); })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeGetMyLeads(ETOKEN);
+}
+function paintMyLeads_(){
+  const host = q('#mlList'); if(!host) return;
+  const term = (q('#mlSearch') ? q('#mlSearch').value : '').toLowerCase();
+  const list = MY_LEADS_CACHE.filter(function(l){
+    if(!term) return true;
+    return String(l.name||'').toLowerCase().indexOf(term)!==-1 ||
+           String(l.phoneNo||'').indexOf(term)!==-1 ||
+           String(l.leadId||'').toLowerCase().indexOf(term)!==-1 ||
+           String(l.area||'').toLowerCase().indexOf(term)!==-1;
+  });
+  if(!list.length){ host.innerHTML = '<div class="empty-state">No assigned leads found.</div>'; return; }
+  host.innerHTML = '<table><thead><tr><th>Lead</th><th style="width:104px">Action</th><th>Area</th><th>Priority</th><th>Status</th><th>Lead ID</th></tr></thead><tbody>' +
+    list.map(function(l){
+      return '<tr><td>'+esc(l.name)+'</td>' +
+        '<td style="white-space:nowrap;">' +
+          '<button class="icon-btn" title="Call" onclick="callCustomer_(\''+esc(l.phoneNo||'')+'\')">📞</button> ' +
+          '<button class="icon-btn" title="Location" onclick="openCustomerLocation_(\''+esc(l.latLong||'')+'\',\''+esc(l.address||'')+'\')">📍</button>' +
+        '</td>' +
+        '<td>'+esc(l.area||'—')+'</td><td>'+esc(l.priority||'—')+'</td><td>'+esc(l.status||'—')+'</td><td>'+esc(l.leadId)+'</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
 function renderMyCustomers(forceReload){
   const main = q('#mainContent');
   main.innerHTML =
-    '<div class="page-header"><div><h2>My Customers</h2><p>Customers assigned to you by Admin.</p></div>' +
-      '<button class="btn btn-secondary" onclick="openAddCustomerModal()">+ Add Customer</button>' +
+    '<div class="page-header"><div><h2 id="mcTitle">My Customers</h2><p id="mcSub">Customers assigned to you by Admin.</p></div>' +
+      '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+        '<button class="btn btn-secondary" onclick="openAddCustomerModal()">+ Add Customer</button>' +
+        '<label class="mc-toggle" title="ON = Customers, OFF = Assigned Leads"><span id="mcToggleLbl">CUSTOMERS</span><input type="checkbox" id="mcModeToggle" checked onchange="toggleMcMode_(this.checked)"><span class="mc-slider"></span></label>' +
+      '</div>' +
     '</div>' +
+    '<div id="mcCustomerBox">' +
     '<div class="filters-bar"><input type="text" id="mcSearch" placeholder="Search customer..." oninput="paintMyCustomers_()">' +
       '<button class="btn btn-ghost" id="mcAdvBtn" style="white-space:nowrap;" onclick="toggleMcAdvPanel_()">&#9660; Advanced Filter</button></div>' +
     mcAdvPanelHtml_() +
     '<div id="mcAdvSummary" class="hidden" style="font-size:12.5px;color:var(--primary-accent);background:var(--primary-light);padding:8px 12px;border-radius:var(--radius-sm);margin:0 0 12px;"></div>' +
     '<div id="mcDayFilters" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px;"></div>' +
-    '<div class="table-scroll" id="mcList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+    '<div class="table-scroll" id="mcList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>' +
+    '</div>' + // end #mcCustomerBox
+    '<div id="mcLeadBox" class="hidden"></div>';
   MC_DAY_FILTER = '';
+  applyMcMode_(); // NEW - ON = Customers (default), OFF = Assigned Leads
   paintMcAdvBtn_(); // NEW - reflect an already-applied Advanced Filter
   // NEW: cache hit - paint instantly, no server call, no skeleton
   if(MC_LOADED_ && !forceReload){
@@ -851,7 +919,7 @@ function openCustomerProfile(customerId){
 function openAddCustomerModal(){
   q('#modalHost').innerHTML =
     '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
-      '<div class="modal-head"><h3>Add Customer</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-head"><h3>Add Customer (New Lead)</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
       '<div class="modal-body">' +
         '<div id="acDuplicate" class="hidden"></div>' +
         '<div class="field"><label>Customer / Shop Name *</label><input type="text" id="acName"></div>' +
@@ -861,7 +929,7 @@ function openAddCustomerModal(){
         '<div class="field"><label>Address (optional)</label><textarea id="acAddress" rows="2"></textarea></div>' +
         '<div class="field"><label>Lat,Long (optional - more accurate than Address for the Location icon)</label><input type="text" id="acLatLong" placeholder="e.g. 22.5726,88.3639"></div>' +
         '<button class="btn btn-ghost" style="width:100%;margin:0 0 12px;" onclick="captureAcLocation_()">📍 Use My Current Location</button>' +
-        '<p style="font-size:12px;color:var(--text-2);margin:0;">This customer will be assigned to you (<strong>'+esc(EMP_NAME)+'</strong>). Admin can reassign it later.</p>' +
+        '<p style="font-size:12px;color:var(--text-2);margin:0;">This will be saved as a <strong>Lead</strong> assigned to you (<strong>'+esc(EMP_NAME)+'</strong>). It becomes a customer only after it is converted/approved.</p>' +
       '</div>' +
       '<div class="modal-actions"><button class="btn btn-primary" id="acSaveBtn" onclick="saveNewCustomer()">Save</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
     '</div></div>';
@@ -923,13 +991,14 @@ function saveNewCustomer(){
     .withSuccessHandler(function(res){
       btn.disabled=false; btn.textContent='Save';
       if(res && res.success){
-        showToast('Customer added: '+res.customerId, 'ok');
+        showToast('Lead added: '+res.leadId, 'ok');
         closeModal();
-        renderMyCustomers(true);
-      } else { showToast((res && res.message) || 'Failed to add customer.', 'err'); }
+        MY_LEADS_LOADED_ = false;                       // NEW - next Assigned Leads view fetches fresh data
+        if(MC_MODE_ === 'leads') renderMyLeads_(true);  // NEW - refresh right away if the leads list is on screen
+      } else { showToast((res && res.message) || 'Failed to add lead.', 'err'); }
     })
-    .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save'; showToast('Failed to add customer.', 'err'); })
-    .apiEmployeeCreateCustomer(ETOKEN, { customerName: name, mobile: mobile, email: email, openingBalance: opening, address: address, latLong: latLong });
+    .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save'; showToast('Failed to add lead.', 'err'); })
+    .apiEmployeeCreateLead(ETOKEN, { customerName: name, mobile: mobile, email: email, openingBalance: opening, address: address, latLong: latLong });
 }
 
 /* ---- Add Visit (captures live location + date/time automatically) ---- */
