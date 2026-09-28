@@ -120,7 +120,16 @@
     .lead-timeline .lt-item::before{content:'';position:absolute;left:-23px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--primary-accent);}
     .lead-timeline .lt-time{font-size:11.5px;color:var(--text-3);font-weight:700;margin-bottom:2px;}
     .lead-timeline .lt-text{font-size:13.5px;white-space:pre-wrap;word-break:break-word;}
-    .lead-timeline .lt-by{font-size:11.5px;color:var(--text-2);margin-top:2px;}
+    /* NEW: activity-type badge + dot colour in the Lead timeline */
+    .lead-timeline .lt-tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;margin:1px 0 3px;background:var(--primary-light);color:var(--primary-accent);}
+    .lead-timeline .lt-item.t-call::before{background:var(--success);}
+    .lead-timeline .lt-item.t-call .lt-tag{background:var(--success-bg);color:var(--success);}
+    .lead-timeline .lt-item.t-status::before,.lead-timeline .lt-item.t-edit::before{background:var(--warning);}
+    .lead-timeline .lt-item.t-status .lt-tag,.lead-timeline .lt-item.t-edit .lt-tag{background:var(--warning-bg);color:var(--warning);}
+    .lead-timeline .lt-item.t-convert::before,.lead-timeline .lt-item.t-create::before{background:var(--success);}
+    .lead-timeline .lt-item.t-convert .lt-tag,.lead-timeline .lt-item.t-create .lt-tag{background:var(--success-bg);color:var(--success);}
+    .lead-timeline .lt-item.t-remove::before{background:var(--danger);}
+    .lead-timeline .lt-item.t-remove .lt-tag{background:var(--danger-bg);color:var(--danger);}
     .profile-grid .span2{grid-column:1 / -1;}
 
     table{width:100%;border-collapse:collapse;font-size:13px;}
@@ -512,7 +521,7 @@ function paintMyLeads_(){
       const shortNote = note.length > 40 ? note.substring(0,40)+'...' : note;
       return '<tr><td class="lead-link" onclick="openLeadDetail_(\''+lid+'\')">'+esc(l.name||'—')+'</td>' +
         '<td style="white-space:nowrap;">' +
-          '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(l.phoneNo||'')+'\')">📞</button> ' +
+          '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(l.phoneNo||'')+'\',\''+lid+'\')">📞</button> ' +
           '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\')">✏️</button> ' +
           '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+esc(l.name||'')+'\')">+</button>' +
         '</td>' +
@@ -526,9 +535,10 @@ function paintMyLeads_(){
 /* ---- NEW: Assigned Leads - call / notes / edit / details ---- */
 
 // Same dial method as callCustomer_ (tel:), but never builds an invalid URL.
-function callLead_(phone){
+function callLead_(phone, leadId){
   const m = String(phone||'').replace(/[^\d+]/g,'');
   if(!m){ showToast('Phone number not available for this lead.', 'err'); return; }
+  if(leadId) logLeadCall_(leadId);   // NEW - records "Call Clicked" in the lead timeline
   window.location.href = 'tel:'+m;
 }
 
@@ -571,6 +581,7 @@ function pickLeadStatus_(i){
   if(String(prev||'').trim() === status) return;
   // 1) update the screen instantly (optimistic) - no reload, no navigation
   l.status = status; l._stSaving = true;
+  delete LEAD_DETAIL_CACHE_[leadId];   // NEW - cached Lead 360 for this lead is now out of date
   paintMyLeads_();
   // 2) save to the Lead sheet in the background
   google.script.run
@@ -643,7 +654,7 @@ function saveLeadNote_(leadId){
       btn.disabled=false; btn.textContent='Save Note';
       if(res && res.success){
         showToast('Note added.', 'ok'); closeModal();
-        if(LEAD_NOTE_FROM_ === 'detail') openLeadDetail_(leadId); else refreshMyLeadsSilently_();
+        delete LEAD_DETAIL_CACHE_[leadId]; if(LEAD_NOTE_FROM_ === 'detail') openLeadDetail_(leadId, true); else refreshMyLeadsSilently_();
       } else { showToast((res && res.message) || 'Failed to add note.', 'err'); }
     })
     .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save Note'; showToast('Failed to add note.', 'err'); })
@@ -704,7 +715,7 @@ function saveLeadEdit_(leadId){
       btn.disabled=false; btn.textContent='Update Lead';
       if(res && res.success){
         showToast('Lead updated.', 'ok'); closeModal();
-        if(LEAD_EDIT_FROM_ === 'detail') openLeadDetail_(leadId); else refreshMyLeadsSilently_();
+        delete LEAD_DETAIL_CACHE_[leadId]; if(LEAD_EDIT_FROM_ === 'detail') openLeadDetail_(leadId, true); else refreshMyLeadsSilently_();
       } else { showToast((res && res.message) || 'Failed to update lead.', 'err'); }
     })
     .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Update Lead'; showToast('Failed to update lead.', 'err'); })
@@ -716,56 +727,155 @@ function saveLeadEdit_(leadId){
     });
 }
 
-/* ---- Lead 360 details page ---- */
-function openLeadDetail_(leadId){
+/* ---- Lead 360 details page: in-page (SPA) navigation + full activity timeline ---- */
+let LEAD_DETAIL_CACHE_ = {};   // leadId -> last server response (re-opening a lead is instant)
+let LEAD_DETAIL_OPEN_ = '';    // leadId currently on screen
+let LEADS_VIEW_STASH_ = null;  // Assigned Leads screen, parked (NOT destroyed) while a Lead is open
+
+// Parks the current Assigned Leads DOM (search text, scroll position, everything) in memory.
+function stashLeadsView_(){
   const main = q('#mainContent');
-  main.innerHTML = '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Assigned Leads</button><div class="skeleton" style="height:200px"></div>';
+  if(!main || !q('#mlList')) return;              // only when the leads list is what's on screen
+  const frag = document.createDocumentFragment();
+  while(main.firstChild) frag.appendChild(main.firstChild);
+  LEADS_VIEW_STASH_ = { frag: frag, scroll: window.pageYOffset || 0 };
+}
+
+// Back button: put the parked list straight back - no rebuild, no skeleton, no waiting.
+function backToMyLeads_(){
+  LEAD_DETAIL_OPEN_ = '';
+  const main = q('#mainContent');
+  MC_MODE_ = 'leads';
+  if(LEADS_VIEW_STASH_ && main){
+    const s = LEADS_VIEW_STASH_; LEADS_VIEW_STASH_ = null;
+    main.innerHTML = '';
+    main.appendChild(s.frag);
+    paintMyLeads_();                 // instant repaint from the in-memory cache
+    window.scrollTo(0, s.scroll);
+    refreshMyLeadsSilently_();       // quiet background sync (no skeleton)
+    return;
+  }
+  renderMyCustomers();               // fallback = the old behaviour
+}
+
+function leadTlClass_(kind){
+  switch(kind){
+    case 'CALL_CLICKED': return 't-call';
+    case 'STATUS_CHANGED': return 't-status';
+    case 'LEAD_CONVERTED': case 'CUSTOMER_CONVERTED': return 't-convert';
+    case 'TAG_REMOVED': return 't-remove';
+    case 'LEAD_CREATED': case 'LEAD_ASSIGNED': case 'LEAD_REASSIGNED': case 'TAG_ADDED': return 't-create';
+    case 'LEAD_UPDATED': case 'ACTIVITY_CHANGED': case 'VISIT_ACTION': return 't-edit';
+    default: return '';
+  }
+}
+function leadBackBtn_(){ return '<button class="back-link" id="leadBackBtn" onclick="backToMyLeads_()">&larr; Back to My Assigned Leads</button>'; }
+
+// Paints the Lead 360 page from a server response (same layout as before; only the history card is new).
+function renderLeadDetail_(res){
+  const main = q('#mainContent'); if(!main) return;
+  const L = res.lead, notes = res.notes || [];
+  const tl = (res.timeline && res.timeline.length) ? res.timeline : notes.map(function(n){
+    return { kind:'NOTE_ADDED', label:'Note Added', text:n.note, by:n.by, dateTime:n.dateTime, t:n.t };
+  });
+  const item = function(k, v, span){ return '<div class="profile-item'+(span?' span2':'')+'"><div class="k">'+k+'</div><div class="v">'+(v ? esc(v) : '—')+'</div></div>'; };
+  const lid = esc(L.leadId), nm = esc(L.name);
+  const photoHtml = /^https?:\/\//i.test(L.photo) ? '<a href="'+esc(L.photo)+'" target="_blank" rel="noopener" style="color:var(--primary-accent);">View Photo</a>' : esc(L.photo||'—');
+  const last = tl[0];
+  main.innerHTML =
+    leadBackBtn_() +
+    '<div class="page-header"><div><h2>'+nm+'</h2><p>'+lid+(LEAD_STATUSES_.indexOf(String(L.status||'').trim())!==-1 ? ' &middot; '+esc(L.status) : '')+'</p></div>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(L.phoneNo||'')+'\',\''+lid+'\')">📞</button>' +
+        '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\',\'detail\')">✏️</button>' +
+        '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+nm+'\',\'detail\')">+</button>' +
+      '</div></div>' +
+    '<div class="card"><div class="card-header"><h3>Lead Information</h3></div><div class="card-body"><div class="profile-grid">' +
+      item('Lead ID', L.leadId) + item('Status', LEAD_STATUSES_.indexOf(String(L.status||'').trim())!==-1 ? L.status : '') +
+      item('Name', L.name) + item('Shop Original Name', L.shopOriginalName) +
+      item('Owner Name', L.ownerName) + item('Ownership', L.ownership) +
+      item('Priority', L.priority) + item('Shop Size', L.shopSize) +
+      item('Shop Services', L.shopServices) + item('Visited Day', L.visitedDay) +
+      item('Remark', L.remark, true) +
+    '</div></div></div>' +
+    '<div class="card section-gap"><div class="card-header"><h3>Contact &amp; Location</h3></div><div class="card-body"><div class="profile-grid">' +
+      item('Phone No', L.phoneNo) + item('Area', L.area) +
+      item('Address', L.address, true) +
+      item('Latitude', L.lat) + item('Longitude', L.lng) +
+      '<div class="profile-item"><div class="k">Photo</div><div class="v">'+photoHtml+'</div></div>' +
+    '</div></div></div>' +
+    '<div class="card section-gap"><div class="card-header"><h3>Assignment</h3></div><div class="card-body"><div class="profile-grid">' +
+      item('Assign Executive', L.assignExecutive) + item('Lead Generated By', L.leadGenerateBy) +
+      item('Last Activity', last ? last.dateTime : '') + item('Total Notes', String(notes.length)) +
+    '</div></div></div>' +
+    '<div class="card section-gap"><div class="card-header"><h3>Notes &amp; Activity History</h3>' +
+      '<button class="btn btn-secondary" onclick="openLeadNoteModal_(\''+lid+'\',\''+nm+'\',\'detail\')">+ Add Note</button></div>' +
+      '<div class="card-body">' +
+      (tl.length
+        ? '<div class="lead-timeline">'+tl.map(function(x){
+            return '<div class="lt-item '+leadTlClass_(x.kind)+'"><div class="lt-time">'+esc(x.dateTime||'—')+'</div>' +
+              '<span class="lt-tag">'+esc(x.label||'Activity')+'</span>' +
+              (x.text ? '<div class="lt-text">'+esc(x.text)+'</div>' : '') +
+              (x.by ? '<div class="lt-by">by '+esc(x.by)+'</div>' : '') + '</div>';
+          }).join('')+'</div>'
+        : '<div class="empty-state">No activity yet. Tap “+ Add Note” to log the first activity.</div>') +
+    '</div></div>';
+}
+
+// Re-fetches the open lead and repaints in place (keeps scroll position, no skeleton).
+function refreshLeadDetailSilently_(leadId){
   google.script.run
     .withSuccessHandler(function(res){
+      if(!res || !res.success) return;
+      LEAD_DETAIL_CACHE_[leadId] = res;
+      if(LEAD_DETAIL_OPEN_ !== leadId || !q('#leadBackBtn')) return;   // user already moved on
+      const y = window.pageYOffset || 0;
+      renderLeadDetail_(res);
+      window.scrollTo(0, y);
+    })
+    .withFailureHandler(function(){})
+    .apiEmployeeGetLeadDetail(ETOKEN, leadId);
+}
+
+// 📞 click -> quietly record "Call Clicked" in the lead's timeline.
+function logLeadCall_(leadId){
+  google.script.run
+    .withSuccessHandler(function(){
+      delete LEAD_DETAIL_CACHE_[leadId];
+      if(LEAD_DETAIL_OPEN_ === leadId && q('#leadBackBtn')) refreshLeadDetailSilently_(leadId);
+    })
+    .withFailureHandler(function(){})
+    .apiEmployeeLogLeadActivity(ETOKEN, leadId, 'CALL_CLICKED', '');
+}
+
+function openLeadDetail_(leadId, fresh){
+  // "fresh" = data just changed (note saved / lead edited) while this page is already open -> refresh in place.
+  if(fresh && LEAD_DETAIL_OPEN_ === leadId && q('#leadBackBtn')){ refreshLeadDetailSilently_(leadId); return; }
+  const main = q('#mainContent');
+  stashLeadsView_();                 // park the list instead of destroying it
+  LEAD_DETAIL_OPEN_ = leadId;
+  const cached = fresh ? null : LEAD_DETAIL_CACHE_[leadId];
+  if(cached){
+    renderLeadDetail_(cached);       // instant - then refreshed quietly below
+  } else {
+    const pre = findLeadInCache_(leadId);
+    main.innerHTML = leadBackBtn_() +
+      (pre ? '<div class="page-header"><div><h2>'+esc(pre.name||'')+'</h2><p>'+esc(pre.leadId||'')+'</p></div></div>' : '') +
+      '<div class="skeleton" style="height:200px"></div>';
+  }
+  window.scrollTo(0, 0);
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(LEAD_DETAIL_OPEN_ !== leadId || !q('#leadBackBtn')) return;   // user already moved on
       if(!res || !res.success){
-        main.innerHTML = '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Assigned Leads</button><div class="empty-state">'+esc((res && res.message) || 'Lead not found.')+'</div>';
+        delete LEAD_DETAIL_CACHE_[leadId];
+        q('#mainContent').innerHTML = leadBackBtn_() + '<div class="empty-state">'+esc((res && res.message) || 'Lead not found.')+'</div>';
         return;
       }
-      const L = res.lead, notes = res.notes || [];
-      const item = function(k, v, span){ return '<div class="profile-item'+(span?' span2':'')+'"><div class="k">'+k+'</div><div class="v">'+(v ? esc(v) : '—')+'</div></div>'; };
-      const lid = esc(L.leadId), nm = esc(L.name);
-      const photoHtml = /^https?:\/\//i.test(L.photo) ? '<a href="'+esc(L.photo)+'" target="_blank" rel="noopener" style="color:var(--primary-accent);">View Photo</a>' : esc(L.photo||'—');
-      const last = notes[0];
-      main.innerHTML =
-        '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Assigned Leads</button>' +
-        '<div class="page-header"><div><h2>'+nm+'</h2><p>'+lid+(LEAD_STATUSES_.indexOf(String(L.status||'').trim())!==-1 ? ' &middot; '+esc(L.status) : '')+'</p></div>' +
-          '<div style="display:flex;gap:8px;">' +
-            '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(L.phoneNo||'')+'\')">📞</button>' +
-            '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\',\'detail\')">✏️</button>' +
-            '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+nm+'\',\'detail\')">+</button>' +
-          '</div></div>' +
-        '<div class="card"><div class="card-header"><h3>Lead Information</h3></div><div class="card-body"><div class="profile-grid">' +
-          item('Lead ID', L.leadId) + item('Status', LEAD_STATUSES_.indexOf(String(L.status||'').trim())!==-1 ? L.status : '') +
-          item('Name', L.name) + item('Shop Original Name', L.shopOriginalName) +
-          item('Owner Name', L.ownerName) + item('Ownership', L.ownership) +
-          item('Priority', L.priority) + item('Shop Size', L.shopSize) +
-          item('Shop Services', L.shopServices) + item('Visited Day', L.visitedDay) +
-          item('Remark', L.remark, true) +
-        '</div></div></div>' +
-        '<div class="card section-gap"><div class="card-header"><h3>Contact &amp; Location</h3></div><div class="card-body"><div class="profile-grid">' +
-          item('Phone No', L.phoneNo) + item('Area', L.area) +
-          item('Address', L.address, true) +
-          item('Latitude', L.lat) + item('Longitude', L.lng) +
-          '<div class="profile-item"><div class="k">Photo</div><div class="v">'+photoHtml+'</div></div>' +
-        '</div></div></div>' +
-        '<div class="card section-gap"><div class="card-header"><h3>Assignment</h3></div><div class="card-body"><div class="profile-grid">' +
-          item('Assign Executive', L.assignExecutive) + item('Lead Generated By', L.leadGenerateBy) +
-          item('Last Activity', last ? last.dateTime : '') + item('Total Notes', String(notes.length)) +
-        '</div></div></div>' +
-        '<div class="card section-gap"><div class="card-header"><h3>Notes &amp; Activity History</h3>' +
-          '<button class="btn btn-secondary" onclick="openLeadNoteModal_(\''+lid+'\',\''+nm+'\',\'detail\')">+ Add Note</button></div>' +
-          '<div class="card-body">' +
-          (notes.length
-            ? '<div class="lead-timeline">'+notes.map(function(n){
-                return '<div class="lt-item"><div class="lt-time">'+esc(n.dateTime||'—')+'</div><div class="lt-text">'+esc(n.note)+'</div>'+(n.by?'<div class="lt-by">by '+esc(n.by)+'</div>':'')+'</div>';
-              }).join('')+'</div>'
-            : '<div class="empty-state">No notes yet. Tap “+ Add Note” to log the first activity.</div>') +
-        '</div></div>';
+      LEAD_DETAIL_CACHE_[leadId] = res;
+      const y = cached ? (window.pageYOffset || 0) : 0;
+      renderLeadDetail_(res);
+      window.scrollTo(0, y);
     })
     .withFailureHandler(onEmployeeSessionError)
     .apiEmployeeGetLeadDetail(ETOKEN, leadId);
