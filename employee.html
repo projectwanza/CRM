@@ -1294,7 +1294,11 @@ function openCustomerProfile(customerId){
       main.innerHTML =
         '<button class="back-link" onclick="renderMyCustomers()">&larr; Back to My Customers</button>' +
         '<div class="page-header"><div><h2>'+esc(p.customerName)+'</h2><p>'+esc(p.customerId)+'</p></div>' +
-          '<button class="btn btn-ghost" onclick="openCustomerContactModal_(\''+esc(p.customerId)+'\',\''+esc(p.customerName)+'\',\''+esc(p.mobile||'')+'\',\''+esc(p.address||'')+'\',\''+esc(p.latLong||'')+'\')">✏ Edit Contact & Location</button>' +
+          '<div style="display:flex;gap:8px;">' +
+            '<button class="icon-btn" title="Call" onclick="callCustomer_(\''+esc(p.mobile||'')+'\',\''+esc(p.customerId)+'\')">📞</button>' +
+            '<button class="icon-btn add-visit" title="Add Note" onclick="openCustomerNoteModal_(\''+esc(p.customerId)+'\',\''+esc(p.customerName)+'\')">+</button>' +
+            '<button class="btn btn-ghost" onclick="openCustomerContactModal_(\''+esc(p.customerId)+'\',\''+esc(p.customerName)+'\',\''+esc(p.mobile||'')+'\',\''+esc(p.address||'')+'\',\''+esc(p.latLong||'')+'\')">✏ Edit Contact & Location</button>' +
+          '</div>' +
         '</div>' +
         '<div class="profile-grid">' +
           '<div class="profile-item"><div class="k">Mobile</div><div class="v">'+esc(p.mobile||'—')+'</div></div>' +
@@ -1312,10 +1316,50 @@ function openCustomerProfile(customerId){
               '<tr style="background:var(--neutral-bg);font-weight:600;"><td colspan="6">Opening Balance</td><td>'+money(p.openingBalance)+'</td></tr>' +
               ledgerRows.join('') + '</tbody></table>') : '<div class="empty-state">No transactions yet.</div>') +
           '</div>' +
-        '</div>';
+        '</div>' +
+        '<div class="card section-gap"><div class="card-header"><h3>Notes &amp; Activity History</h3>' +
+          '<button class="btn btn-secondary" onclick="openCustomerNoteModal_(\''+esc(p.customerId)+'\',\''+esc(p.customerName)+'\')">+ Add Note</button></div>' +
+          '<div class="card-body">' +
+          ((res.activity||[]).length
+            ? '<div class="lead-timeline">'+(res.activity||[]).map(function(a){
+                return '<div class="lt-item"><div class="lt-time">'+esc(a.dateTime||'—')+'</div>' +
+                  '<span class="badge">'+esc(a.label)+'</span>' +
+                  '<div class="lt-text">'+esc(a.text)+'</div>'+(a.by?'<div class="lt-by">by '+esc(a.by)+'</div>':'')+'</div>';
+              }).join('')+'</div>'
+            : '<div class="empty-state">No activity yet. Tap “+ Add Note” to log the first one.</div>') +
+        '</div></div>';
     })
     .withFailureHandler(onEmployeeSessionError)
     .apiEmployeeGetCustomerProfile(ETOKEN, customerId);
+}
+
+/* ---- Add Note for a Customer (historical - same pattern as Lead notes) ---- */
+function openCustomerNoteModal_(customerId, customerName){
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Add Note</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 12px;font-size:13.5px;">Customer: <strong>'+esc(customerName)+'</strong></p>' +
+        '<div class="field"><label>Note</label><textarea id="cnText" rows="4" maxlength="1000" placeholder="e.g. Called customer, discussed pricing..."></textarea></div>' +
+        '<p style="font-size:12px;color:var(--text-2);margin:0;">Date and time are saved automatically. Earlier notes are never overwritten.</p>' +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-primary" id="cnSaveBtn" onclick="saveCustomerNote_(\''+esc(customerId)+'\')">Save Note</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
+    '</div></div>';
+}
+function saveCustomerNote_(customerId){
+  const text = q('#cnText').value.trim();
+  if(!text){ showToast('Please write a note.', 'err'); return; }
+  const btn = q('#cnSaveBtn'); btn.disabled=true; btn.textContent='Saving...';
+  google.script.run
+    .withSuccessHandler(function(res){
+      btn.disabled=false; btn.textContent='Save Note';
+      if(res && res.success){
+        showToast('Note added.', 'ok'); closeModal();
+        openCustomerProfile(customerId);
+      } else { showToast((res && res.message) || 'Failed to add note.', 'err'); }
+    })
+    .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save Note'; showToast('Failed to add note.', 'err'); })
+    .apiEmployeeAddCustomerNote(ETOKEN, customerId, text);
 }
 
 /* ---- Add Customer (auto-assigned to logged-in employee) ---- */
@@ -1440,10 +1484,21 @@ function saveVisit_(customerId){
 
 // NEW: 📞 Call icon - direct dial to the customer's REGISTERED mobile
 // number (mobile itself is no longer shown in the table, only used here).
-function callCustomer_(mobile){
+function callCustomer_(mobile, customerId){
   const m = String(mobile||'').trim();
   if(!m){ showToast('Mobile number not available for this customer.', 'err'); return; }
+  if(customerId) logCustomerCall_(customerId);   // NEW - records "Calling" in the customer timeline
   window.location.href = 'tel:'+m;
+}
+// 📞 click -> quietly record the call in the customer's timeline, then
+// refresh the profile's timeline in place if it's the page on screen.
+function logCustomerCall_(customerId){
+  google.script.run
+    .withSuccessHandler(function(){
+      if(q('#mainContent') && q('#mainContent').innerHTML.indexOf(esc(customerId))>-1) openCustomerProfile(customerId);
+    })
+    .withFailureHandler(function(){})
+    .apiEmployeeLogCustomerActivity(ETOKEN, customerId, 'CALL_CLICKED', '');
 }
 
 // NEW: 📍 Location icon - opens Google Maps DIRECTIONS to the customer.
@@ -1503,11 +1558,10 @@ function saveCustomerContact_(customerId){
       if(res && res.success){
         showToast('Updated.', 'ok');
         closeModal();
-        const c = MY_CUSTOMERS_CACHE.filter(function(x){ return x.customerId===customerId; })[0];
+                const c = MY_CUSTOMERS_CACHE.filter(function(x){ return x.customerId===customerId; })[0];
         if(c){ c.mobile=mobile; c.address=address; c.latLong=latLong; }
         refreshMyCustomersSilently_();
-        if(q('#mcList')) paintMyCustomers_();
-        if(q('#mainContent') && q('#mainContent').innerHTML.indexOf(esc(customerId))>-1) openCustomerProfile(customerId);
+        if(q('#mainContent') && q('#mainContent').innerHTML.indexOf(esc(customerId))>-1) openCustomerProfile(customerId); // NEW - also refreshes the Notes & Activity timeline
       } else { showToast((res && res.message) || 'Failed to update.', 'err'); }
     })
     .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Save'; showToast('Failed to update.', 'err'); })
