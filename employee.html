@@ -430,8 +430,8 @@ function paintEmpDashboard_(res){ // NEW - split out so both the fresh-load and 
   const el = q('#empStats'); if(!el) return;
   if(!res || !res.success){ el.innerHTML = '<div class="empty-state">Failed to load dashboard.</div>'; return; }
   el.innerHTML =
-    stat('My Customers', res.myCustomers) +
-    clickableStat_("Today's Visits", res.todaysVisits, 'openTodaysVisitsModal()') +
+    stat('My Customers / Leads', res.myCustomers + ' / ' + res.myLeads) +
+    clickableStat_("Today's Activity", res.todaysActivityCustomers + ' / ' + res.todaysActivityLeads, 'openTodaysVisitsModal()') +
     stat('Monthly Sales', money(res.monthlySales)) +
     stat('Outstanding Due', money(res.outstandingDue));
 }
@@ -663,45 +663,66 @@ function saveLeadNote_(leadId){
 
 /* ---- Edit Lead (full lead edit - updates the SAME row, Lead ID read-only) ---- */
 let LEAD_EDIT_FROM_ = 'list';
+// NEW: renders the Edit Lead form right away. "loading"=true means the full
+// record hasn't arrived from the server yet - fields we don't have show a
+// placeholder and Save stays disabled so a half-loaded form can never wipe
+// data that just hasn't loaded yet.
+function renderLeadEditForm_(L, O, loading){
+  const dl = function(id, arr){ return '<datalist id="'+id+'">'+(arr||[]).map(function(v){ return '<option value="'+esc(v)+'">'; }).join('')+'</datalist>'; };
+  const inp = function(id, label, val, extra){ return '<div class="field"><label>'+label+'</label><input type="text" id="'+id+'" value="'+esc(val||'')+'" '+(loading?'disabled placeholder="Loading..."':(extra||''))+'></div>'; };
+  const O_ = O || {};
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:560px;">' +
+      '<div class="modal-head"><h3>Edit Lead</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        inp('elId','Lead ID (read-only)',L.leadId,'readonly style="background:var(--neutral-bg);"') +
+        inp('elName','Name *',L.name) +
+        inp('elShop','Shop Original Name',L.shopOriginalName) +
+        inp('elPhone','Phone No',L.phoneNo) +
+        inp('elArea','Area',L.area) +
+        '<div class="field"><label>Address</label><textarea id="elAddress" rows="2" '+(loading?'disabled placeholder="Loading..."':'')+'>'+esc(L.address||'')+'</textarea></div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' + inp('elLat','Latitude',L.lat) + inp('elLng','Longitude',L.lng) + '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+          inp('elPriority','Priority',L.priority,'list="dlPriority"') +
+          '<div class="field"><label>Lead Status</label><select id="elStatus" '+(loading?'disabled':'')+'>' +
+            (LEAD_STATUSES_.indexOf(String(L.status||'').trim())===-1 ? '<option value="" selected>— Select status —</option>' : '') +
+            LEAD_STATUSES_.map(function(s){ return '<option value="'+esc(s)+'"'+(s===String(L.status||'').trim()?' selected':'')+'>'+esc(s)+'</option>'; }).join('') +
+          '</select></div>' +
+        '</div>' +
+        inp('elServices','Shop Services',L.shopServices) +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+          inp('elSize','Shop Size',L.shopSize,'list="dlSize"') + inp('elVisited','Visited Day',L.visitedDay,'placeholder="e.g. Monday, Thursday"') +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+          inp('elOwner','Owner Name',L.ownerName) + inp('elOwnership','Ownership',L.ownership,'list="dlOwnership"') +
+        '</div>' +
+        '<div class="field"><label>Remark</label><textarea id="elRemark" rows="2" '+(loading?'disabled placeholder="Loading..."':'')+'>'+esc(L.remark||'')+'</textarea></div>' +
+        inp('elAssign','Assign Executive (read-only)',L.assignExecutive,'readonly style="background:var(--neutral-bg);"') +
+        dl('dlPriority',O_.priority) + dl('dlSize',O_.shopSize) + dl('dlOwnership',O_.ownership) +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-primary" id="elSaveBtn" '+(loading?'disabled':'')+' onclick="saveLeadEdit_(\''+esc(L.leadId)+'\')">'+(loading?'Loading…':'Update Lead')+'</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
+    '</div></div>';
+}
+
 function openLeadEditModal_(leadId, from){
   LEAD_EDIT_FROM_ = from || 'list';
+  const cached = LEAD_DETAIL_CACHE_[leadId];
+  if(cached && cached.success){
+    renderLeadEditForm_(cached.lead, cached.options || {});   // already have the full record - zero network wait
+    return;
+  }
+  // Open the modal INSTANTLY with whatever we already know from the list, then fill in the rest.
+  const l = findLeadInCache_(leadId) || {};
+  renderLeadEditForm_({
+    leadId: leadId, name: l.name, phoneNo: l.phoneNo, area: l.area, status: l.status,
+    shopOriginalName: '', address: '', lat: '', lng: '', priority: '', shopServices: '',
+    shopSize: '', visitedDay: '', ownerName: '', ownership: '', remark: '', assignExecutive: EMP_NAME
+  }, {}, true);
   google.script.run
     .withSuccessHandler(function(res){
       if(!res || !res.success){ showToast((res && res.message) || 'Could not load lead.', 'err'); return; }
-      const L = res.lead, O = res.options || {};
-      const dl = function(id, arr){ return '<datalist id="'+id+'">'+(arr||[]).map(function(v){ return '<option value="'+esc(v)+'">'; }).join('')+'</datalist>'; };
-      const inp = function(id, label, val, extra){ return '<div class="field"><label>'+label+'</label><input type="text" id="'+id+'" value="'+esc(val||'')+'" '+(extra||'')+'></div>'; };
-      q('#modalHost').innerHTML =
-        '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:560px;">' +
-          '<div class="modal-head"><h3>Edit Lead</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
-          '<div class="modal-body">' +
-            inp('elId','Lead ID (read-only)',L.leadId,'readonly style="background:var(--neutral-bg);"') +
-            inp('elName','Name *',L.name) +
-            inp('elShop','Shop Original Name',L.shopOriginalName) +
-            inp('elPhone','Phone No',L.phoneNo) +
-            inp('elArea','Area',L.area) +
-            '<div class="field"><label>Address</label><textarea id="elAddress" rows="2">'+esc(L.address||'')+'</textarea></div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' + inp('elLat','Latitude',L.lat) + inp('elLng','Longitude',L.lng) + '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-              inp('elPriority','Priority',L.priority,'list="dlPriority"') +
-              '<div class="field"><label>Lead Status</label><select id="elStatus">' +
-                (LEAD_STATUSES_.indexOf(String(L.status||'').trim())===-1 ? '<option value="" selected>— Select status —</option>' : '') +
-                LEAD_STATUSES_.map(function(s){ return '<option value="'+esc(s)+'"'+(s===String(L.status||'').trim()?' selected':'')+'>'+esc(s)+'</option>'; }).join('') +
-              '</select></div>' +
-            '</div>' +
-            inp('elServices','Shop Services',L.shopServices) +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-              inp('elSize','Shop Size',L.shopSize,'list="dlSize"') + inp('elVisited','Visited Day',L.visitedDay,'placeholder="e.g. Monday, Thursday"') +
-            '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
-              inp('elOwner','Owner Name',L.ownerName) + inp('elOwnership','Ownership',L.ownership,'list="dlOwnership"') +
-            '</div>' +
-            '<div class="field"><label>Remark</label><textarea id="elRemark" rows="2">'+esc(L.remark||'')+'</textarea></div>' +
-            inp('elAssign','Assign Executive (read-only)',L.assignExecutive,'readonly style="background:var(--neutral-bg);"') +
-            dl('dlPriority',O.priority) + dl('dlSize',O.shopSize) + dl('dlOwnership',O.ownership) +
-          '</div>' +
-          '<div class="modal-actions"><button class="btn btn-primary" id="elSaveBtn" onclick="saveLeadEdit_(\''+esc(L.leadId)+'\')">Update Lead</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
-        '</div></div>';
+      LEAD_DETAIL_CACHE_[leadId] = res;
+      if(q('#elId') && q('#elId').value === leadId) renderLeadEditForm_(res.lead, res.options || {}); // same modal still open -> fill it in
     })
     .withFailureHandler(onEmployeeSessionError)
     .apiEmployeeGetLeadDetail(ETOKEN, leadId);
