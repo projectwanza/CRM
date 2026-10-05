@@ -277,7 +277,7 @@
    already exists and this block does nothing. If hosted elsewhere
    (e.g. GitHub Pages), it polyfills google.script.run over fetch. */
 (function(){
-   var GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwqY1Xy4A8UB_IhV3hxszbZuOoJT985aERQiDLoh9V-c-qnp-81Wz1gULjsMpp9txuKkA/exec';
+   var GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyZ46ohHnfmD3puFO6xXWN0HQjGypZ0PZLFMTtHY3OjUv4PEPo_-kxf2lH47q5GX4cY/exec';
 
   if (window.google && window.google.script && window.google.script.run) return;
   window.google = window.google || {};
@@ -1083,6 +1083,7 @@ function mcAdvPanelHtml_(){
       '<button class="btn btn-primary" style="width:auto;" onclick="applyMcAdvFilter_()">Search / Apply Filter</button>' +
       '<button class="btn btn-ghost" onclick="clearMcAdvFilter_()">Clear Filter</button>' +
       '<button class="btn hidden" id="mcAdvShareBtn" title="Share filtered customers on WhatsApp" style="background:#25D366;color:#fff;" onclick="shareMcAdvFilterList_()">&#128994; Share</button>' +
+      '<button class="btn hidden" id="mcAdvExcelBtn" title="Download filtered customers as Excel" style="background:#1d6f42;color:#fff;" onclick="exportMcAdvFilterToExcel_()">&#11015; Excel</button>' +
     '</div>' +
   '</div>';
 }
@@ -1106,6 +1107,8 @@ function paintMcAdvBtn_(){
     (MC_ADV_.active ? ' <span style="background:var(--primary-accent);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;margin-left:4px;">ON</span>' : '');
   const shareBtn = q('#mcAdvShareBtn');
   if(shareBtn) shareBtn.classList.toggle('hidden', !MC_ADV_.active);
+  const excelBtn = q('#mcAdvExcelBtn'); // NEW
+  if(excelBtn) excelBtn.classList.toggle('hidden', !MC_ADV_.active);
   if(!sum) return;
   if(MC_ADV_.active){
     sum.innerHTML = '<strong>Filter:</strong> ' + mcAdvSummaryText_() +
@@ -1242,6 +1245,53 @@ function shareMcPart_(i){
   const m = MC_SHARE_MSGS_[i];
   if(!m) return;
   window.open('https://wa.me/?text=' + encodeURIComponent(m.text), '_blank');
+}
+
+/* ---- NEW: Advanced Filter -> download the SAME filtered list as Excel (.xls) ---- */
+function mcXlEsc_(v){ return String(v===undefined||v===null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function exportMcAdvFilterToExcel_(){
+  if(!MC_ADV_.active){ showToast('Apply an Advanced Filter first.', 'err'); return; }
+  const list = MC_LAST_LIST_ || [];
+  if(!list.length){ showToast('No customers to export.', 'err'); return; }
+
+  const typeNames = MC_ADV_TYPES_.filter(function(t){ return MC_ADV_.types.indexOf(t[0])>-1; }).map(function(t){ return t[1]; }).join(', ');
+  const term = q('#mcSearch') ? q('#mcSearch').value.trim() : '';
+
+  const cols = ['#','Customer Name','Customer ID','Mobile','Area','Address','Visited Day','Status','Outstanding',
+    'Last Sale Date','Last Visit Logged','Last Payment Date','Last Order Date','Days Since Last Activity'];
+
+  const rows = list.map(function(c, i){
+    let latest = 0;
+    MC_ADV_.types.forEach(function(t){ const ms = Number(c[MC_ADV_RAWKEY_[t]])||0; if(ms>latest) latest = ms; });
+    return [
+      i+1, c.customerName||'', c.customerId||'', c.mobile||'', c.area||'', c.address||'', c.visitedDay||'', c.status||'',
+      Number(c.outstanding)||0,
+      c.lastSaleDate||'', (c.lastLogVisitRaw?mcFmtDate_(c.lastLogVisitRaw):''),
+      (c.lastPaymentDateRaw?mcFmtDate_(c.lastPaymentDateRaw):''), (c.lastOrderDateRaw?mcFmtDate_(c.lastOrderDateRaw):''),
+      latest ? mcDaysText_(mcDaysSince_(latest)) : ''
+    ];
+  });
+
+  let html = '<html><head><meta charset="UTF-8"></head><body><table border="1">';
+  html += '<tr><td colspan="'+cols.length+'"><b>My Customers - Filtered List</b></td></tr>';
+  html += '<tr><td colspan="'+cols.length+'">Filter: '+mcXlEsc_((MC_ADV_.status==='has'?'Has Activity':'No Activity')+' - '+typeNames+' - last '+MC_ADV_.days+' day'+(MC_ADV_.days===1?'':'s'))+'</td></tr>';
+  if(term) html += '<tr><td colspan="'+cols.length+'">Search: '+mcXlEsc_(term)+'</td></tr>';
+  if(MC_DAY_FILTER) html += '<tr><td colspan="'+cols.length+'">Visited Day: '+mcXlEsc_(MC_DAY_FILTER)+'</td></tr>';
+  html += '<tr><td colspan="'+cols.length+'">Prepared By: '+mcXlEsc_(EMP_NAME)+' &nbsp; Date: '+mcXlEsc_(mcFmtDate_(Date.now()))+' &nbsp; Total: '+list.length+'</td></tr>';
+  html += '<tr></tr>';
+  html += '<tr>'+cols.map(function(h){ return '<th>'+mcXlEsc_(h)+'</th>'; }).join('')+'</tr>';
+  rows.forEach(function(r){ html += '<tr>'+r.map(function(v){ return '<td>'+mcXlEsc_(v)+'</td>'; }).join('')+'</tr>'; });
+  html += '</table></body></html>';
+
+  const blob = new Blob(['\ufeff'+html], { type: 'application/vnd.ms-excel' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'My_Customers_Filtered_' + mcFmtDate_(Date.now()).replace(/\s+/g,'_') + '.xls';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function paintMyCustomers_(){
