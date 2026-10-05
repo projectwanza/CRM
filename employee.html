@@ -1272,22 +1272,32 @@ function exportMcAdvFilterToExcel_(){
     ];
   });
 
-  let html = '<html><head><meta charset="UTF-8"></head><body><table border="1">';
-  html += '<tr><td colspan="'+cols.length+'"><b>My Customers - Filtered List</b></td></tr>';
-  html += '<tr><td colspan="'+cols.length+'">Filter: '+mcXlEsc_((MC_ADV_.status==='has'?'Has Activity':'No Activity')+' - '+typeNames+' - last '+MC_ADV_.days+' day'+(MC_ADV_.days===1?'':'s'))+'</td></tr>';
-  if(term) html += '<tr><td colspan="'+cols.length+'">Search: '+mcXlEsc_(term)+'</td></tr>';
-  if(MC_DAY_FILTER) html += '<tr><td colspan="'+cols.length+'">Visited Day: '+mcXlEsc_(MC_DAY_FILTER)+'</td></tr>';
-  html += '<tr><td colspan="'+cols.length+'">Prepared By: '+mcXlEsc_(EMP_NAME)+' &nbsp; Date: '+mcXlEsc_(mcFmtDate_(Date.now()))+' &nbsp; Total: '+list.length+'</td></tr>';
-  html += '<tr></tr>';
-  html += '<tr>'+cols.map(function(h){ return '<th>'+mcXlEsc_(h)+'</th>'; }).join('')+'</tr>';
-  rows.forEach(function(r){ html += '<tr>'+r.map(function(v){ return '<td>'+mcXlEsc_(v)+'</td>'; }).join('')+'</tr>'; });
-  html += '</table></body></html>';
+  // FIX: Excel's newer "format doesn't match extension" warning (and
+  // sometimes an outright failure to open) happens because the file was
+  // HTML content saved with a ".xls" name. A genuine CSV has no such
+  // mismatch - every spreadsheet program (Excel, Google Sheets, WPS,
+  // LibreOffice) opens it directly with zero warnings.
+  const csvCell = function(v){
+    const s = String(v===undefined||v===null?'':v);
+    return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  };
+  const csvLine = function(arr){ return arr.map(csvCell).join(','); };
+  const lines = [];
+  lines.push(csvLine(['My Customers - Filtered List']));
+  lines.push(csvLine(['Filter: '+(MC_ADV_.status==='has'?'Has Activity':'No Activity')+' - '+typeNames+' - last '+MC_ADV_.days+' day'+(MC_ADV_.days===1?'':'s')]));
+  if(term) lines.push(csvLine(['Search: '+term]));
+  if(MC_DAY_FILTER) lines.push(csvLine(['Visited Day: '+MC_DAY_FILTER]));
+  lines.push(csvLine(['Prepared By: '+EMP_NAME+'   Date: '+mcFmtDate_(Date.now())+'   Total: '+list.length]));
+  lines.push('');
+  lines.push(csvLine(cols));
+  rows.forEach(function(r){ lines.push(csvLine(r)); });
+  const csv = lines.join('\r\n');
 
-  const blob = new Blob(['\ufeff'+html], { type: 'application/vnd.ms-excel' });
+  const blob = new Blob(['\ufeff'+csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'My_Customers_Filtered_' + mcFmtDate_(Date.now()).replace(/\s+/g,'_') + '.xls';
+  a.download = 'My_Customers_Filtered_' + mcFmtDate_(Date.now()).replace(/\s+/g,'_') + '.csv';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
