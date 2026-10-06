@@ -488,6 +488,8 @@ function mcSortArrow_(key){ return MC_SORT_.key===key ? (MC_SORT_.dir===1?' ▲'
 let MC_MODE_ = 'customers';   // 'customers' | 'leads'
 let MY_LEADS_CACHE = [];
 let MY_LEADS_LOADED_ = false;
+let ML_ADV_ = { active:false, statuses:[] };   // NEW - Lead Advanced Filter (multi-status, OR)
+let ML_LAST_LIST_ = [];                         // NEW - exactly what's on screen right now
 
 function toggleMcMode_(on){
   MC_MODE_ = on ? 'customers' : 'leads';
@@ -508,8 +510,12 @@ function applyMcMode_(){
 function renderMyLeads_(forceReload){
   const box = q('#mcLeadBox'); if(!box) return;
   box.innerHTML =
-    '<div class="filters-bar"><input type="text" id="mlSearch" placeholder="Search lead..." oninput="paintMyLeads_()"></div>' +
+    '<div class="filters-bar"><input type="text" id="mlSearch" placeholder="Search lead..." oninput="paintMyLeads_()">' +
+      '<button class="btn btn-ghost" id="mlAdvBtn" style="white-space:nowrap;" onclick="toggleMlAdvPanel_()">&#9660; Advanced Filter</button></div>' +
+    mlAdvPanelHtml_() +
+    '<div id="mlAdvSummary" class="hidden" style="font-size:12.5px;color:var(--primary-accent);background:var(--primary-light);padding:8px 12px;border-radius:var(--radius-sm);margin:0 0 12px;"></div>' +
     '<div class="table-scroll" id="mlList"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+  paintMlAdvBtn_();
   if(MY_LEADS_LOADED_ && !forceReload) paintMyLeads_();
   google.script.run
     .withSuccessHandler(function(list){ MY_LEADS_CACHE = list || []; MY_LEADS_LOADED_ = true; paintMyLeads_(); })
@@ -520,14 +526,17 @@ function paintMyLeads_(){
   const host = q('#mlList'); if(!host) return;
   const term = (q('#mlSearch') ? q('#mlSearch').value : '').toLowerCase();
   const list = MY_LEADS_CACHE.filter(function(l){
-    if(!term) return true;
-    return String(l.name||'').toLowerCase().indexOf(term)!==-1 ||
-           String(l.phoneNo||'').indexOf(term)!==-1 ||
-           String(l.leadId||'').toLowerCase().indexOf(term)!==-1 ||
-           String(l.area||'').toLowerCase().indexOf(term)!==-1;
+    if(term && String(l.name||'').toLowerCase().indexOf(term)===-1 &&
+       String(l.phoneNo||'').indexOf(term)===-1 &&
+       String(l.leadId||'').toLowerCase().indexOf(term)===-1 &&
+       String(l.area||'').toLowerCase().indexOf(term)===-1) return false;
+    // NEW: Advanced Filter - multi-status OR match
+    if(ML_ADV_.active && ML_ADV_.statuses.indexOf(String(l.status||'').trim())===-1) return false;
+    return true;
   });
+  ML_LAST_LIST_ = list; // NEW - exactly what's currently visible (search + filter applied)
   if(!list.length){ host.innerHTML = '<div class="empty-state">No assigned leads found.</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th>Lead</th><th style="width:130px">Action</th><th>Area</th><th>Last Activity Date</th><th>Notes (Last Notes)</th><th>Status</th></tr></thead><tbody>' +
+  host.innerHTML = '<table><thead><tr><th>Lead</th><th style="width:170px">Action</th><th>Area</th><th>Last Activity Date</th><th>Notes (Last Notes)</th><th>Status</th></tr></thead><tbody>' +
     list.map(function(l){
       const lid = esc(l.leadId);
       const note = String(l.lastNote||'');
@@ -536,13 +545,177 @@ function paintMyLeads_(){
         '<td style="white-space:nowrap;">' +
           '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(l.phoneNo||'')+'\',\''+lid+'\')">📞</button> ' +
           '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\')">✏️</button> ' +
-          '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+esc(l.name||'')+'\')">+</button>' +
+          '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+esc(l.name||'')+'\')">+</button> ' +
+          leadLocationBtn_(l) +
         '</td>' +
         '<td>'+esc(l.area||'—')+'</td>' +
         '<td>'+esc(l.lastActivityDate||'—')+'</td>' +
         '<td class="lead-note-cell" title="'+esc(note)+'" onclick="showLeadNote_(\''+lid+'\')">'+(shortNote ? esc(shortNote) : '—')+'</td>' +
         '<td><span class="lead-status'+(l._stSaving?' saving':'')+'" title="Change status" onclick="event.stopPropagation();openLeadStatusMenu_(this,\''+lid+'\')">'+esc(leadStatusLabel_(l.status))+' <span style="font-size:9px;">&#9662;</span></span></td></tr>';
     }).join('') + '</tbody></table>';
+}
+
+/* ================= LEADS: ADVANCED FILTER (multi-status, OR) + CSV + WhatsApp ================= */
+
+function mlAdvPanelHtml_(){
+  const lbl = 'display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:6px;';
+  const chips = LEAD_STATUSES_.filter(function(s){ return s!=='Unassign'; }).map(function(s){
+    const on = ML_ADV_.statuses.indexOf(s)>-1;
+    return '<label style="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border:1.5px solid var(--border);border-radius:999px;font-size:13px;font-weight:500;cursor:pointer;background:#fff;">' +
+      '<input type="checkbox" class="mlAdvCb" value="'+esc(s)+'" '+(on?'checked':'')+'> '+esc(s)+'</label>';
+  }).join('');
+  return '<div id="mlAdvPanel" class="hidden" style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:0 0 12px;box-shadow:var(--shadow-sm);">' +
+    '<div style="font-size:11.5px;font-weight:700;letter-spacing:.08em;color:var(--text-2);margin-bottom:14px;">ADVANCED LEAD FILTER - STATUS</div>' +
+    '<div style="margin-bottom:16px;"><label style="'+lbl+'">Status (select one or more - matches ANY selected)</label><div style="display:flex;gap:8px;flex-wrap:wrap;">'+chips+'</div></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<button class="btn btn-primary" style="width:auto;" onclick="applyMlAdvFilter_()">Search / Apply Filter</button>' +
+      '<button class="btn btn-ghost" onclick="clearMlAdvFilter_()">Clear Filter</button>' +
+      '<button class="btn hidden" id="mlAdvShareBtn" title="Share filtered leads on WhatsApp" style="background:#25D366;color:#fff;" onclick="shareMlAdvFilterList_()">&#128994; Share</button>' +
+      '<button class="btn hidden" id="mlAdvCsvBtn" title="Download filtered leads as Excel" style="background:#1d6f42;color:#fff;" onclick="exportMlAdvFilterToCsv_()">&#11015; Excel</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function toggleMlAdvPanel_(){
+  const p = q('#mlAdvPanel'); if(!p) return;
+  p.classList.toggle('hidden');
+  paintMlAdvBtn_();
+}
+
+function paintMlAdvBtn_(){
+  const btn = q('#mlAdvBtn'), panel = q('#mlAdvPanel'), sum = q('#mlAdvSummary');
+  if(!btn || !panel) return;
+  const open = !panel.classList.contains('hidden');
+  btn.innerHTML = (open ? '&#9650;' : '&#9660;') + ' Advanced Filter' +
+    (ML_ADV_.active ? ' <span style="background:var(--primary-accent);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;margin-left:4px;">ON</span>' : '');
+  const shareBtn = q('#mlAdvShareBtn');
+  if(shareBtn) shareBtn.classList.toggle('hidden', !ML_ADV_.active);
+  const csvBtn = q('#mlAdvCsvBtn');
+  if(csvBtn) csvBtn.classList.toggle('hidden', !ML_ADV_.active);
+  if(!sum) return;
+  if(ML_ADV_.active){
+    sum.innerHTML = '<strong>Filter:</strong> Status is ' + esc(ML_ADV_.statuses.join(', ')) +
+      ' <a href="#" onclick="clearMlAdvFilter_();return false;" style="margin-left:12px;font-weight:600;">Clear</a>' +
+      ' <a href="#" onclick="shareMlAdvFilterList_();return false;" style="margin-left:12px;font-weight:600;color:#128c4a;">Share</a>';
+    sum.classList.remove('hidden');
+  } else { sum.classList.add('hidden'); sum.innerHTML = ''; }
+}
+
+function applyMlAdvFilter_(){
+  const statuses = Array.prototype.slice.call(document.querySelectorAll('.mlAdvCb:checked')).map(function(cb){ return cb.value; });
+  if(!statuses.length){ showToast('Select at least one status.', 'err'); return; }
+  ML_ADV_ = { active:true, statuses:statuses };
+  q('#mlAdvPanel').classList.add('hidden');
+  paintMlAdvBtn_();
+  paintMyLeads_();
+}
+
+function clearMlAdvFilter_(){
+  ML_ADV_ = { active:false, statuses:[] };
+  document.querySelectorAll('.mlAdvCb').forEach(function(cb){ cb.checked = false; });
+  paintMlAdvBtn_();
+  paintMyLeads_();
+}
+
+let ML_SHARE_MSGS_ = [];
+function mlBuildSharePartsForWhatsApp_(){
+  const list = ML_LAST_LIST_ || [];
+  const DIV = '━━━━━━━━━━━━━━━━';
+  const term = q('#mlSearch') ? q('#mlSearch').value.trim() : '';
+
+  let headRest = DIV + '\n';
+  headRest += '*Filter - Status:* ' + ML_ADV_.statuses.join(', ') + '\n';
+  if(term) headRest += '*Search:* ' + term + '\n';
+  headRest += '*Prepared By:* ' + EMP_NAME + '\n';
+  headRest += '*Date:* ' + mcFmtDate_(Date.now()) + '\n';
+  headRest += '*Total Leads:* ' + list.length + '\n' + DIV + '\n\n';
+  const foot = '\nPlease follow up with the above leads accordingly.\nThank you.';
+
+  const blocks = list.map(function(l, i){
+    let b = '*' + (i+1) + '. ' + l.name + '*\n';
+    b += '*Phone:* ' + (l.phoneNo || 'Not available') + '\n';
+    b += '*Area:* ' + (l.area || 'Not available') + '\n';
+    b += '*Status:* ' + (l.status || 'Not available') + '\n';
+    return b;
+  });
+
+  const MAX = 5500;
+  const reserve = encodeURIComponent(headRest + foot).length + 80;
+  const groups = []; let cur = [], curLen = reserve;
+  blocks.forEach(function(b, i){
+    const l = encodeURIComponent(b + '\n').length;
+    if(cur.length && curLen + l > MAX){ groups.push(cur); cur = []; curLen = reserve; }
+    cur.push({ text: b, idx: i+1 }); curLen += l;
+  });
+  if(cur.length) groups.push(cur);
+
+  return groups.map(function(g, gi){
+    const title = '*LEAD LIST' + (groups.length>1 ? ' (Part ' + (gi+1) + ' of ' + groups.length + ')' : '') + '*\n';
+    return {
+      text: title + headRest + g.map(function(x){ return x.text; }).join('\n') + foot,
+      from: g[0].idx, to: g[g.length-1].idx
+    };
+  });
+}
+
+function shareMlAdvFilterList_(){
+  if(!ML_ADV_.active){ showToast('Apply an Advanced Filter first.', 'err'); return; }
+  if(!ML_LAST_LIST_.length){ showToast('No leads to share.', 'err'); return; }
+  ML_SHARE_MSGS_ = mlBuildSharePartsForWhatsApp_();
+  if(ML_SHARE_MSGS_.length === 1){ shareMlPart_(0); return; }
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Share on WhatsApp</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 12px;font-size:13.5px;">'+ML_LAST_LIST_.length+' leads are split into '+ML_SHARE_MSGS_.length+' messages (WhatsApp link size limit). Send each part:</p>' +
+        ML_SHARE_MSGS_.map(function(m, i){
+          return '<button class="btn btn-primary" style="background:#25D366;border-color:#25D366;margin-bottom:8px;" onclick="shareMlPart_('+i+')">&#128994; Send Part '+(i+1)+' of '+ML_SHARE_MSGS_.length+' (leads '+m.from+'-'+m.to+')</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>' +
+    '</div></div>';
+}
+function shareMlPart_(i){
+  const m = ML_SHARE_MSGS_[i];
+  if(!m) return;
+  window.open('https://wa.me/?text=' + encodeURIComponent(m.text), '_blank');
+}
+
+function exportMlAdvFilterToCsv_(){
+  if(!ML_ADV_.active){ showToast('Apply an Advanced Filter first.', 'err'); return; }
+  const list = ML_LAST_LIST_ || [];
+  if(!list.length){ showToast('No leads to export.', 'err'); return; }
+
+  const term = q('#mlSearch') ? q('#mlSearch').value.trim() : '';
+  const cols = ['#','Lead Name','Lead ID','Phone','Area','Address','Status','Last Activity Date','Last Note'];
+  const rows = list.map(function(l, i){
+    return [i+1, l.name||'', l.leadId||'', l.phoneNo||'', l.area||'', l.address||'', l.status||'', l.lastActivityDate||'', l.lastNote||''];
+  });
+
+  const csvCell = function(v){
+    const s = String(v===undefined||v===null?'':v);
+    return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  };
+  const csvLine = function(arr){ return arr.map(csvCell).join(','); };
+  const lines = [];
+  lines.push(csvLine(['My Assigned Leads - Filtered List']));
+  lines.push(csvLine(['Filter - Status: '+ML_ADV_.statuses.join(', ')]));
+  if(term) lines.push(csvLine(['Search: '+term]));
+  lines.push(csvLine(['Prepared By: '+EMP_NAME+'   Date: '+mcFmtDate_(Date.now())+'   Total: '+list.length]));
+  lines.push('');
+  lines.push(csvLine(cols));
+  rows.forEach(function(r){ lines.push(csvLine(r)); });
+  const csv = lines.join('\r\n');
+
+  const blob = new Blob(['\ufeff'+csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'My_Leads_Filtered_' + mcFmtDate_(Date.now()).replace(/\s+/g,'_') + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /* ---- NEW: Assigned Leads - call / notes / edit / details ---- */
@@ -555,8 +728,16 @@ function callLead_(phone, leadId){
   window.location.href = 'tel:'+m;
 }
 
+// NEW: 📍 Location icon for Leads - same pattern as My Customers.
+function leadLocationBtn_(l){
+  const hasLocation = isValidLatLong_(l.latLong);
+  return hasLocation
+    ? '<button class="icon-btn" title="Location" onclick="event.stopPropagation();openCustomerLocation_(\''+esc(l.latLong||'')+'\',\''+esc(l.address||'')+'\')">📍</button>'
+    : '<button class="icon-btn" title="Add Location" onclick="event.stopPropagation();openLeadEditModal_(\''+esc(l.leadId)+'\')">📍+</button>';
+}
+
 /* ---- NEW: Lead Status - 14 fixed values, click to change, saved silently ---- */
-const LEAD_STATUSES_ = ['New Lead','Contacted','No Response','Follow-up','Interested','Quotation Sent','Negotiation','Order Pending','Converted','Customer','Not Interested','Wrong Number','Fake Lead','Duplicate'];
+const LEAD_STATUSES_ = ['New Lead','Contacted','No Response','Follow-up','Interested','Quotation Sent','Negotiation','Order Pending','Converted','Customer','Not Interested','Wrong Number','Fake Lead','Duplicate','Unassign'];
 function leadStatusLabel_(s){ const t = String(s||'').trim(); return LEAD_STATUSES_.indexOf(t) !== -1 ? t : 'Set status'; }
 function findLeadInCache_(leadId){ return MY_LEADS_CACHE.filter(function(x){ return x.leadId === leadId; })[0]; }
 
@@ -593,6 +774,7 @@ function pickLeadStatus_(i){
   const prev = l.status;
   if(String(prev||'').trim() === status) return;
   if(status === 'Converted'){ openLeadConvertModal_(leadId, l.name); return; } // NEW - needs a linked customer first, never set directly
+  if(status === 'Unassign'){ unassignLead_(leadId, l.name); return; } // NEW - removes the lead from you entirely, not a stored status
   // 1) update the screen instantly (optimistic) - no reload, no navigation
   l.status = status; l._stSaving = true;
   delete LEAD_DETAIL_CACHE_[leadId];   // NEW - cached Lead 360 for this lead is now out of date
@@ -616,6 +798,25 @@ function pickLeadStatus_(i){
     })
     .apiEmployeeUpdateLeadStatus(ETOKEN, leadId, status);
 }
+
+// NEW: Unassign - removes the lead from "My Assigned Leads" entirely (does not touch Status/notes).
+function unassignLead_(leadId, leadName){
+  if(!confirm('Unassign "'+leadName+'" from yourself? It will disappear from your Assigned Leads list.')) return;
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(res && res.success){
+        MY_LEADS_CACHE = MY_LEADS_CACHE.filter(function(x){ return x.leadId !== leadId; });
+        delete LEAD_DETAIL_CACHE_[leadId];
+        showToast('Lead unassigned.', 'ok');
+        paintMyLeads_();
+      } else {
+        showToast((res && res.message) || 'Could not unassign lead.', 'err');
+      }
+    })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeUnassignLead(ETOKEN, leadId);
+}
+
 /* ---- NEW: Convert Lead (Direct/Indirect + pick an EXISTING customer) ---- */
 let LC_LEAD_ID_ = '', LC_SELECTED_CID_ = '', LC_SEARCH_TIMER_ = null;
 function openLeadConvertModal_(leadId, leadName){
@@ -773,8 +974,9 @@ function renderLeadEditForm_(L, O, loading){
           '<div class="field"><label>Lead Status</label><select id="elStatus" '+(loading?'disabled':'')+'>' +
             (LEAD_STATUSES_.indexOf(String(L.status||'').trim())===-1 ? '<option value="" selected>— Select status —</option>' : '') +
             LEAD_STATUSES_.map(function(s){
-              // "Converted" needs a linked customer - only settable via the status badge's "Convert Lead" flow.
-              return '<option value="'+esc(s)+'"'+(s===String(L.status||'').trim()?' selected':'')+(s==='Converted'?' disabled':'')+'>'+esc(s)+(s==='Converted'?' (use status badge)':'')+'</option>';
+              // "Converted" and "Unassign" are only settable via the status badge, never from this form.
+              const special = (s==='Converted' || s==='Unassign');
+              return '<option value="'+esc(s)+'"'+(s===String(L.status||'').trim()?' selected':'')+(special?' disabled':'')+'>'+esc(s)+(special?' (use status badge)':'')+'</option>';
             }).join('') +
           '</select></div>' +
         '</div>' +
