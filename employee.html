@@ -277,7 +277,7 @@
    already exists and this block does nothing. If hosted elsewhere
    (e.g. GitHub Pages), it polyfills google.script.run over fetch. */
 (function(){
-   var GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwqY1Xy4A8UB_IhV3hxszbZuOoJT985aERQiDLoh9V-c-qnp-81Wz1gULjsMpp9txuKkA/exec';
+   var GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyZ46ohHnfmD3puFO6xXWN0HQjGypZ0PZLFMTtHY3OjUv4PEPo_-kxf2lH47q5GX4cY/exec';
 
   if (window.google && window.google.script && window.google.script.run) return;
   window.google = window.google || {};
@@ -315,7 +315,7 @@ let ETOKEN = sessionStorage.getItem('employee_token') || null;
 let EMP_NAME = sessionStorage.getItem('employee_name') || '';
 let MY_CUSTOMERS_CACHE = [];
 let MC_LOADED_ = false; // NEW - true after the first successful My Customers fetch
-let MC_ADV_ = { active:false, days:15, types:[], status:'has' }; // NEW - applied Advanced Filter
+let MC_ADV_ = { active:false, days:15, types:[], status:'has', statuses:[] }; // NEW - applied Advanced Filter (statuses: NEW)
 const MC_ADV_TYPES_ = [['visit','Visit'],['sale','Sale'],['payment','Payment'],['order','Order']];
 let MC_LAST_LIST_ = [];   // NEW - the customer list currently shown (used by Share)
 let MC_SHARE_MSGS_ = [];  // NEW - prepared WhatsApp message parts
@@ -1281,6 +1281,13 @@ function mcAdvPanelHtml_(){
         '<option value="has"'+(MC_ADV_.status==='has'?' selected':'')+'>Has Activity</option>' +
         '<option value="none"'+(MC_ADV_.status==='none'?' selected':'')+'>No Activity</option>' +
       '</select></div>' +
+    '<div style="margin-bottom:16px;"><label style="'+lbl+'">Customer Status (optional - select one or more, matches ANY)</label><div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      CUSTOMER_STATUSES_.map(function(s){
+        const on = MC_ADV_.statuses.indexOf(s)>-1;
+        return '<label style="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border:1.5px solid var(--border);border-radius:999px;font-size:13px;font-weight:500;cursor:pointer;background:#fff;">' +
+          '<input type="checkbox" class="mcAdvStatusCb" value="'+esc(s)+'" '+(on?'checked':'')+'> '+esc(s)+'</label>';
+      }).join('') +
+    '</div></div>' +
     '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
       '<button class="btn btn-primary" style="width:auto;" onclick="applyMcAdvFilter_()">Search / Apply Filter</button>' +
       '<button class="btn btn-ghost" onclick="clearMcAdvFilter_()">Clear Filter</button>' +
@@ -1323,19 +1330,21 @@ function paintMcAdvBtn_(){
 function applyMcAdvFilter_(){
   const days = parseInt(q('#mcAdvDays').value, 10);
   const types = Array.prototype.slice.call(document.querySelectorAll('.mcAdvCb:checked')).map(function(cb){ return cb.value; });
+  const statuses = Array.prototype.slice.call(document.querySelectorAll('.mcAdvStatusCb:checked')).map(function(cb){ return cb.value; }); // NEW
   if(!days || days < 1){ showToast('Enter the number of days (1 or more).', 'err'); return; }
   if(!types.length){ showToast('Select at least one activity type.', 'err'); return; }
-  MC_ADV_ = { active:true, days:days, types:types, status:q('#mcAdvStatus').value };
+  MC_ADV_ = { active:true, days:days, types:types, status:q('#mcAdvStatus').value, statuses:statuses };
   q('#mcAdvPanel').classList.add('hidden');
   paintMcAdvBtn_();
   paintMyCustomers_();
 }
 
 function clearMcAdvFilter_(){
-  MC_ADV_ = { active:false, days:15, types:[], status:'has' };
+  MC_ADV_ = { active:false, days:15, types:[], status:'has', statuses:[] };
   if(q('#mcAdvDays')) q('#mcAdvDays').value = 15;
   if(q('#mcAdvStatus')) q('#mcAdvStatus').value = 'has';
   document.querySelectorAll('.mcAdvCb').forEach(function(cb){ cb.checked = false; });
+  document.querySelectorAll('.mcAdvStatusCb').forEach(function(cb){ cb.checked = false; }); // NEW
   paintMcAdvBtn_();
   paintMyCustomers_();
 }
@@ -1346,7 +1355,10 @@ function mcAdvMatch_(c){
   const cutoff = d.getTime() - MC_ADV_.days * 86400000;
   const rawKey = { visit:'lastLogVisitRaw', sale:'lastSaleDateRaw', payment:'lastPaymentDateRaw', order:'lastOrderDateRaw' };
   const hasAny = MC_ADV_.types.some(function(t){ return (Number(c[rawKey[t]])||0) >= cutoff; });
-  return MC_ADV_.status==='has' ? hasAny : !hasAny;
+  const activityOk = MC_ADV_.status==='has' ? hasAny : !hasAny;
+  // NEW: optional Customer Status narrowing (OR among selected statuses)
+  if(MC_ADV_.statuses && MC_ADV_.statuses.length && MC_ADV_.statuses.indexOf(String(c.pipelineStatus||'').trim())===-1) return false;
+  return activityOk;
 }
 
 /* ================= SHARE FILTERED CUSTOMER LIST (WhatsApp) ================= */
@@ -1506,6 +1518,68 @@ function exportMcAdvFilterToExcel_(){
   URL.revokeObjectURL(url);
 }
 
+/* ---- NEW: Customer Status - same 14 values + same click-to-change UI as Lead Status ---- */
+const CUSTOMER_STATUSES_ = ['New Lead','Contacted','No Response','Follow-up','Interested','Quotation Sent','Negotiation','Order Pending','Converted','Customer','Not Interested','Wrong Number','Fake Lead','Duplicate'];
+function customerStatusLabel_(s){ const t = String(s||'').trim(); return CUSTOMER_STATUSES_.indexOf(t) !== -1 ? t : 'Set status'; }
+function findCustomerInCache_(cid){ return MY_CUSTOMERS_CACHE.filter(function(x){ return x.customerId === cid; })[0]; }
+
+let CS_MENU_CID_ = '';
+function closeCustStatusMenu_(){
+  const m = q('#custStatusMenu'); if(m) m.remove();
+  CS_MENU_CID_ = '';
+}
+function openCustStatusMenu_(el, cid){
+  const wasOpenFor = CS_MENU_CID_;
+  closeCustStatusMenu_();
+  if(wasOpenFor === cid) return;
+  const c = findCustomerInCache_(cid); if(!c) return;
+  CS_MENU_CID_ = cid;
+  const cur = String(c.pipelineStatus||'').trim();
+  const m = document.createElement('div');
+  m.id = 'custStatusMenu'; m.className = 'lead-status-menu';
+  m.innerHTML = CUSTOMER_STATUSES_.map(function(s, i){
+    return '<button type="button" class="'+(s===cur?'current':'')+'" onclick="pickCustStatus_('+i+')">'+esc(s)+'</button>';
+  }).join('');
+  document.body.appendChild(m);
+  const r = el.getBoundingClientRect();
+  const mh = m.offsetHeight, mw = m.offsetWidth;
+  let top = r.bottom + 4;
+  if(top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8));
+  m.style.top = top + 'px'; m.style.left = left + 'px';
+}
+function pickCustStatus_(i){
+  const cid = CS_MENU_CID_, status = CUSTOMER_STATUSES_[i];
+  closeCustStatusMenu_();
+  const c = findCustomerInCache_(cid);
+  if(!c || !status) return;
+  const prev = c.pipelineStatus;
+  if(String(prev||'').trim() === status) return;
+  c.pipelineStatus = status; c._stSaving = true;
+  paintMyCustomers_();
+  google.script.run
+    .withSuccessHandler(function(res){
+      const cur = findCustomerInCache_(cid);
+      if(cur) cur._stSaving = false;
+      if(!(res && res.success)){
+        if(cur && cur.pipelineStatus === status) cur.pipelineStatus = prev;
+        showToast((res && res.message) || 'Could not update status.', 'err');
+      }
+      paintMyCustomers_();
+    })
+    .withFailureHandler(function(err){
+      const cur = findCustomerInCache_(cid);
+      if(cur){ cur._stSaving = false; if(cur.pipelineStatus === status) cur.pipelineStatus = prev; }
+      paintMyCustomers_();
+      onEmployeeSessionError(err);
+    })
+    .apiEmployeeUpdateCustomerStatus(ETOKEN, cid, status);
+}
+document.addEventListener('click', function(e){ const m = q('#custStatusMenu'); if(m && !m.contains(e.target)) closeCustStatusMenu_(); });
+document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeCustStatusMenu_(); });
+window.addEventListener('resize', closeCustStatusMenu_);
+document.addEventListener('scroll', function(e){ const m = q('#custStatusMenu'); if(m && e.target !== m && !m.contains(e.target)) closeCustStatusMenu_(); }, true);
+
 function paintMyCustomers_(){
   const host = q('#mcList');
   if(!host) return;
@@ -1549,7 +1623,7 @@ function paintMyCustomers_(){
     '<th style="cursor:pointer" onclick="sortMyCustomers_(\'outstanding\')">Outstanding'+mcSortArrow_('outstanding')+'</th>' +
     '<th style="cursor:pointer" onclick="sortMyCustomers_(\'lastSaleDate\')">Last Sale'+mcSortArrow_('lastSaleDate')+'</th>' +
     '<th style="cursor:pointer" onclick="sortMyCustomers_(\'lastVisitDate\')">Last Visit'+mcSortArrow_('lastVisitDate')+'</th>' +
-    '<th>Visited Day</th></tr></thead><tbody>' +
+    '<th>Visited Day</th><th>Status</th></tr></thead><tbody>' +
     list.map(function(c){
       const cid = esc(c.customerId);
       return '<tr class="clickable"><td onclick="openCustomerProfile(\''+cid+'\')">'+esc(c.customerName)+'</td>' +
@@ -1558,6 +1632,7 @@ function paintMyCustomers_(){
         '<td onclick="openCustomerProfile(\''+cid+'\')">'+esc(c.lastSaleDate||'—')+'</td>' +
         '<td onclick="openCustomerProfile(\''+cid+'\')">'+esc(c.lastVisitDate||'—')+'</td>' +
         '<td style="cursor:pointer" title="Click to set" onclick="event.stopPropagation();openVisitedDayModal(\''+cid+'\',\''+esc(c.customerName)+'\',\''+esc(c.visitedDay||'')+'\')">'+esc(c.visitedDay||'Set day')+'</td>' +
+        '<td><span class="lead-status'+(c._stSaving?' saving':'')+'" title="Change status" onclick="event.stopPropagation();openCustStatusMenu_(this,\''+cid+'\')">'+esc(customerStatusLabel_(c.pipelineStatus))+' <span style="font-size:9px;">&#9662;</span></span></td>' +
         '</tr>';
     }).join('') + '</tbody></table>';
   // Mobile card list - shown only under 640px, no horizontal scroll needed.
@@ -1569,6 +1644,7 @@ function paintMyCustomers_(){
         '<div class="cc-row"><span>Last Sale</span><span>'+esc(c.lastSaleDate||'—')+'</span></div>' +
         '<div class="cc-row"><span>Last Visit</span><span>'+esc(c.lastVisitDate||'—')+'</span></div>' +
         '<div class="cc-row"><span>Visited Day</span><span onclick="event.stopPropagation();openVisitedDayModal(\''+cid+'\',\''+esc(c.customerName)+'\',\''+esc(c.visitedDay||'')+'\')" style="cursor:pointer;">'+esc(c.visitedDay||'Set day')+'</span></div>' +
+        '<div class="cc-row"><span>Status</span><span class="lead-status'+(c._stSaving?' saving':'')+'" onclick="event.stopPropagation();openCustStatusMenu_(this,\''+cid+'\')">'+esc(customerStatusLabel_(c.pipelineStatus))+' <span style="font-size:9px;">&#9662;</span></span></div>' +
         '<div class="cc-actions">' + actionsHtml(c, cid) + '</div>' +
       '</div>';
     }).join('') + '</div>';
