@@ -1580,6 +1580,56 @@ document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeCu
 window.addEventListener('resize', closeCustStatusMenu_);
 document.addEventListener('scroll', function(e){ const m = q('#custStatusMenu'); if(m && e.target !== m && !m.contains(e.target)) closeCustStatusMenu_(); }, true);
 
+/* ---- NEW: Customer Auto-Tags - render chips + manual add/remove popover ---- */
+const CUSTOMER_ALL_TAGS_ = [
+  '🟢 Active','🔵 Regular Customer','🟢 Highly Active','🟤 New Customer','🟠 Payment Pending',
+  '⚪ No Recent Activity','🟡 Temporarily Inactive','🔴 Inactive Customer','🚫 Not Interested',
+  '⛔ Do Not Contact','🔄 Re-Activation Required','⭐ VIP Customer','💎 Premium Customer',
+  '🏆 High Value Customer','📈 Growing Customer','🔁 Reactivated Customer','💤 Dormant Customer'
+];
+function renderCustTagsCell_(c, cid){
+  const chips = (c.tags||[]).map(function(t){
+    return '<span style="display:inline-block;background:var(--neutral-bg,#f1f3f5);border:1px solid var(--border,#e4e7ec);border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600;margin:2px 4px 2px 0;white-space:nowrap;">'+esc(t)+'</span>';
+  }).join('');
+  return '<div style="max-width:260px;">' + chips + '<button class="icon-btn" title="Manage Tags" onclick="event.stopPropagation();openCustTagManager_(\''+cid+'\')">🏷️+</button></div>';
+}
+function openCustTagManager_(cid){
+  const c = findCustomerInCache_(cid); if(!c) return;
+  const current = c.tags || [];
+  q('#modalHost').innerHTML =
+    '<div class="modal-overlay" onclick="if(event.target===this) closeModal()"><div class="modal">' +
+      '<div class="modal-head"><h3>Manage Tags</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>' +
+      '<div class="modal-body">' +
+        '<p style="margin:0 0 12px;font-size:13.5px;">'+esc(c.customerName)+' — tap a tag to add or remove it. System-calculated tags can be overridden.</p>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
+          CUSTOMER_ALL_TAGS_.map(function(t, i){
+            const on = current.indexOf(t) > -1;
+            return '<button type="button" class="btn '+(on?'btn-primary':'btn-ghost')+'" style="padding:6px 12px;font-size:12.5px;" onclick="toggleCustTag_(\''+cid+'\','+i+')">'+esc(t)+'</button>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>' +
+    '</div></div>';
+}
+function toggleCustTag_(cid, tagIndex){
+  const c = findCustomerInCache_(cid); if(!c) return;
+  const tag = CUSTOMER_ALL_TAGS_[tagIndex];
+  const has = (c.tags||[]).indexOf(tag) > -1;
+  const action = has ? 'remove' : 'add';
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(res && res.success){
+        c.tags = has ? (c.tags||[]).filter(function(t){ return t!==tag; }) : (c.tags||[]).concat([tag]);
+        openCustTagManager_(cid);
+        paintMyCustomers_();
+      } else {
+        showToast((res && res.message) || 'Could not update tag.', 'err');
+      }
+    })
+    .withFailureHandler(onEmployeeSessionError)
+    .apiEmployeeSetCustomerTag(ETOKEN, cid, tag, action);
+}
+
 function paintMyCustomers_(){
   const host = q('#mcList');
   if(!host) return;
@@ -1623,7 +1673,7 @@ function paintMyCustomers_(){
     '<th style="cursor:pointer" onclick="sortMyCustomers_(\'outstanding\')">Outstanding'+mcSortArrow_('outstanding')+'</th>' +
     '<th style="cursor:pointer" onclick="sortMyCustomers_(\'lastSaleDate\')">Last Sale'+mcSortArrow_('lastSaleDate')+'</th>' +
     '<th style="cursor:pointer" onclick="sortMyCustomers_(\'lastVisitDate\')">Last Visit'+mcSortArrow_('lastVisitDate')+'</th>' +
-    '<th>Visited Day</th><th>Status</th></tr></thead><tbody>' +
+    '<th>Visited Day</th><th>Status</th><th>Tags</th></tr></thead><tbody>' +
     list.map(function(c){
       const cid = esc(c.customerId);
       return '<tr class="clickable"><td onclick="openCustomerProfile(\''+cid+'\')">'+esc(c.customerName)+'</td>' +
@@ -1633,6 +1683,7 @@ function paintMyCustomers_(){
         '<td onclick="openCustomerProfile(\''+cid+'\')">'+esc(c.lastVisitDate||'—')+'</td>' +
         '<td style="cursor:pointer" title="Click to set" onclick="event.stopPropagation();openVisitedDayModal(\''+cid+'\',\''+esc(c.customerName)+'\',\''+esc(c.visitedDay||'')+'\')">'+esc(c.visitedDay||'Set day')+'</td>' +
         '<td><span class="lead-status'+(c._stSaving?' saving':'')+'" title="Change status" onclick="event.stopPropagation();openCustStatusMenu_(this,\''+cid+'\')">'+esc(customerStatusLabel_(c.pipelineStatus))+' <span style="font-size:9px;">&#9662;</span></span></td>' +
+        '<td>' + renderCustTagsCell_(c, cid) + '</td>' +
         '</tr>';
     }).join('') + '</tbody></table>';
   // Mobile card list - shown only under 640px, no horizontal scroll needed.
@@ -1645,6 +1696,7 @@ function paintMyCustomers_(){
         '<div class="cc-row"><span>Last Visit</span><span>'+esc(c.lastVisitDate||'—')+'</span></div>' +
         '<div class="cc-row"><span>Visited Day</span><span onclick="event.stopPropagation();openVisitedDayModal(\''+cid+'\',\''+esc(c.customerName)+'\',\''+esc(c.visitedDay||'')+'\')" style="cursor:pointer;">'+esc(c.visitedDay||'Set day')+'</span></div>' +
         '<div class="cc-row"><span>Status</span><span class="lead-status'+(c._stSaving?' saving':'')+'" onclick="event.stopPropagation();openCustStatusMenu_(this,\''+cid+'\')">'+esc(customerStatusLabel_(c.pipelineStatus))+' <span style="font-size:9px;">&#9662;</span></span></div>' +
+        '<div class="cc-row" style="align-items:flex-start;"><span>Tags</span>' + renderCustTagsCell_(c, cid) + '</div>' +
         '<div class="cc-actions">' + actionsHtml(c, cid) + '</div>' +
       '</div>';
     }).join('') + '</div>';
