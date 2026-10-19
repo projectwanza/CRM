@@ -162,6 +162,7 @@
       .order-card .oc-actions{display:flex;gap:8px;margin-top:10px;}
       .order-card .oc-actions .icon-btn{flex:1;text-align:center;}
       #mcList table{display:none;}
+      #mlList table{display:none;}   /* NEW - leads: table hidden on mobile, card list (same as My Customers) shown instead */
       .customers-mobile-cards{display:block;}
       .customer-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:10px;box-shadow:var(--shadow-sm);}
       .customer-card .cc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;cursor:pointer;}
@@ -376,7 +377,7 @@ function employeeLogout(){
   MC_ADV_ = { active:false, days:15, types:[], status:'has' };
   if(ATTENDANCE_TIMER_){ clearInterval(ATTENDANCE_TIMER_); ATTENDANCE_TIMER_ = null; }
   // NEW - Shop View cleanup so a stale map never leaks into the next login
-  SHOP_VIEW_CACHE = []; SHOP_VIEW_LOADED_ = false;
+  SHOP_VIEW_CACHE = []; SHOP_VIEW_LOADED_ = false; SV_MODE_ = 'customers';
   if(SHOP_MAP_){ SHOP_MAP_.remove(); SHOP_MAP_ = null; }
   q('#appShell').style.display='none'; q('#loginScreen').style.display='flex';
 }
@@ -536,7 +537,7 @@ function paintMyLeads_(){
   });
   ML_LAST_LIST_ = list; // NEW - exactly what's currently visible (search + filter applied)
   if(!list.length){ host.innerHTML = '<div class="empty-state">No assigned leads found.</div>'; return; }
-  host.innerHTML = '<table><thead><tr><th>Lead</th><th style="width:170px">Action</th><th>Area</th><th>Last Activity Date</th><th>Notes (Last Notes)</th><th>Status</th></tr></thead><tbody>' +
+  const leadsTableHtml = '<table><thead><tr><th>Lead</th><th style="width:170px">Action</th><th>Area</th><th>Last Activity Date</th><th>Notes (Last Notes)</th><th>Status</th></tr></thead><tbody>' +
     list.map(function(l){
       const lid = esc(l.leadId);
       const note = String(l.lastNote||'');
@@ -553,6 +554,28 @@ function paintMyLeads_(){
         '<td class="lead-note-cell" title="'+esc(note)+'" onclick="showLeadNote_(\''+lid+'\')">'+(shortNote ? esc(shortNote) : '—')+'</td>' +
         '<td><span class="lead-status'+(l._stSaving?' saving':'')+'" title="Change status" onclick="event.stopPropagation();openLeadStatusMenu_(this,\''+lid+'\')">'+esc(leadStatusLabel_(l.status))+' <span style="font-size:9px;">&#9662;</span></span></td></tr>';
     }).join('') + '</tbody></table>';
+  // NEW: mobile card list - same layout as My Customers (visible only under 640px; table is hidden there by CSS)
+  const leadsCardsHtml = '<div class="customers-mobile-cards">' +
+    list.map(function(l){
+      const lid = esc(l.leadId);
+      const noteTxt = String(l.lastNote||'');
+      const shortNote = noteTxt.length > 40 ? noteTxt.substring(0,40)+'...' : noteTxt;
+      return '<div class="customer-card">' +
+        '<div class="cc-top" onclick="openLeadDetail_(\''+lid+'\')"><span class="cc-title">'+esc(l.name||'—')+'</span>' +
+          '<span class="lead-status'+(l._stSaving?' saving':'')+'" title="Change status" onclick="event.stopPropagation();openLeadStatusMenu_(this,\''+lid+'\')">'+esc(leadStatusLabel_(l.status))+' <span style="font-size:9px;">&#9662;</span></span></div>' +
+        '<div class="cc-row"><span>Area</span><span>'+esc(l.area||'—')+'</span></div>' +
+        '<div class="cc-row"><span>Phone</span><span>'+esc(l.phoneNo||'—')+'</span></div>' +
+        '<div class="cc-row"><span>Last Activity</span><span>'+esc(l.lastActivityDate||'—')+'</span></div>' +
+        '<div class="cc-row"><span>Last Note</span><span style="max-width:60%;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" title="'+esc(noteTxt)+'" onclick="showLeadNote_(\''+lid+'\')">'+(shortNote ? esc(shortNote) : '—')+'</span></div>' +
+        '<div class="cc-actions">' +
+          '<button class="icon-btn" title="Call" onclick="callLead_(\''+esc(l.phoneNo||'')+'\',\''+lid+'\')">📞</button> ' +
+          '<button class="icon-btn" title="Edit Lead" onclick="openLeadEditModal_(\''+lid+'\')">✏️</button> ' +
+          '<button class="icon-btn add-visit" title="Add Note" onclick="openLeadNoteModal_(\''+lid+'\',\''+esc(l.name||'')+'\')">+</button> ' +
+          leadLocationBtn_(l) +
+        '</div>' +
+      '</div>';
+    }).join('') + '</div>';
+  host.innerHTML = leadsTableHtml + leadsCardsHtml;
 }
 
 /* ================= LEADS: ADVANCED FILTER (multi-status, OR) + CSV + WhatsApp ================= */
@@ -2695,12 +2718,16 @@ let SV_SAT_ON_ = false;
 let SV_OSM_LAYER_ = null;
 let SV_SAT_LAYER_ = null;
 let SV_ME_MARKER_ = null;
+let SV_MODE_ = 'customers';   // NEW - Shop View toggle: 'customers' (default) | 'leads'
 
 function renderShopView(){
   const main = q('#mainContent');
+  const svLeads_ = (SV_MODE_ === 'leads');
   main.innerHTML =
-    '<div class="page-header"><div><h2>🗺️ Shop View</h2><p>All your customers plotted on a map.</p></div></div>' +
-    '<div class="filters-bar"><input type="text" id="svSearch" placeholder="Search customer / shop..." oninput="svFilterMarkers_()" onkeydown="if(event.key===\'Enter\')svGoToFirstMatch_()"></div>' +
+    '<div class="page-header"><div><h2>🗺️ Shop View</h2><p>'+(svLeads_ ? 'Your assigned leads plotted on a map (Converted / Customer leads are hidden).' : 'All your customers plotted on a map.')+'</p></div>' +
+      '<label class="mc-toggle" title="ON = Customers, OFF = Leads"><span id="svToggleLbl">'+(svLeads_ ? 'LEADS' : 'CUSTOMERS')+'</span><input type="checkbox" id="svModeToggle"'+(svLeads_ ? '' : ' checked')+' onchange="toggleSvMode_(this.checked)"><span class="mc-slider"></span></label>' +
+    '</div>' +
+    '<div class="filters-bar"><input type="text" id="svSearch" placeholder="'+(svLeads_ ? 'Search lead...' : 'Search customer / shop...')+'" oninput="svFilterMarkers_()" onkeydown="if(event.key===\'Enter\')svGoToFirstMatch_()"></div>' +
     '<div id="shopViewMapWrap" class="shopview-map-wrap">' +
       '<div id="shopMap" class="shopview-map"></div>' +
       '<div class="sv-controls">' +
@@ -2709,12 +2736,14 @@ function renderShopView(){
         '<button class="sv-ctrl-btn" title="My current location" onclick="svLocateMe_()">📍 My Location</button>' +
         '<button class="sv-ctrl-btn" title="Fullscreen" onclick="toggleShopMapFullscreen_()">⛶ Fullscreen</button>' +
       '</div>' +
-      '<div class="sv-legend"><span>🔵 Shop</span><span>📍 You</span></div>' +
+      '<div class="sv-legend"><span>'+(svLeads_ ? '🟠 Lead' : '🔵 Shop')+'</span><span>📍 You</span></div>' +
       '<div id="svLoading" class="sv-loading">Loading map…</div>' +
     '</div>' +
-    '<div id="svEmpty" class="empty-state hidden">No customers with a saved location yet. Add a Lat,Long from My Customers first.</div>';
+    '<div id="svEmpty" class="empty-state hidden">'+(svLeads_ ? 'No assigned leads with a saved location yet (Converted / Customer leads are not shown). Add a Lat,Long from My Assigned Leads first.' : 'No customers with a saved location yet. Add a Lat,Long from My Customers first.')+'</div>';
 
   if(SHOP_MAP_){ SHOP_MAP_.remove(); SHOP_MAP_ = null; }
+
+  if(svLeads_){ svLoadLeadsMode_(); return; }   // NEW - Leads mode; Customers mode below is unchanged
 
   if(SHOP_VIEW_LOADED_){ svInitMap_(SHOP_VIEW_CACHE); return; }
 
@@ -2755,9 +2784,9 @@ function svInitMap_(list){
   SV_CLUSTER_ = L.markerClusterGroup({ maxClusterRadius:60 });
   SV_MARKERS_ = [];
   valid.forEach(function(c){
-    const icon = L.divIcon({ className:'sv-shop-icon', html:'🔵', iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-10] });
+    const icon = L.divIcon({ className:'sv-shop-icon', html:(c.isLead ? '🟠' : '🔵'), iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-10] });
     const marker = L.marker([c.lat, c.lng], { icon:icon });
-    marker.bindPopup(svPopupHtml_(c), { maxWidth:280 });
+    marker.bindPopup(c.isLead ? svLeadPopupHtml_(c) : svPopupHtml_(c), { maxWidth:280 });
     marker._svData = c;
     SV_CLUSTER_.addLayer(marker);
     SV_MARKERS_.push(marker);
@@ -2787,6 +2816,68 @@ function svPopupHtml_(c){
 }
 function svPopupRow_(label, value){
   return '<div class="sv-popup-row"><span class="k">'+esc(label)+'</span><span class="v">'+esc(value)+'</span></div>';
+}
+
+/* ---- NEW: Shop View - Customers / Leads toggle ---- */
+function toggleSvMode_(on){
+  if(q('#svLoading')){                       // map still loading - don't switch mid-flight
+    const t = q('#svModeToggle'); if(t) t.checked = (SV_MODE_ === 'customers');
+    showToast('Map is still loading…');
+    return;
+  }
+  SV_MODE_ = on ? 'customers' : 'leads';
+  renderShopView();
+}
+
+function svLoadLeadsMode_(){
+  if(MY_LEADS_LOADED_){ svInitMap_(svLeadMapItems_()); return; }
+  google.script.run
+    .withSuccessHandler(function(list){
+      MY_LEADS_CACHE = list || []; MY_LEADS_LOADED_ = true;
+      if(SV_MODE_ !== 'leads' || !q('#shopViewMapWrap')) return;   // user already moved on
+      svInitMap_(svLeadMapItems_());
+    })
+    .withFailureHandler(function(err){
+      onEmployeeSessionError(err);
+      const el = q('#svLoading'); if(el) el.textContent = 'Failed to load map.';
+    })
+    .apiEmployeeGetMyLeads(ETOKEN);
+}
+
+// Assigned leads that have a valid saved Lat,Long. Leads whose status is
+// Converted or Customer are NOT shown as lead markers. Fields are mapped to
+// the same names the existing map search uses (customerName / mobile / area).
+function svLeadMapItems_(){
+  return (MY_LEADS_CACHE || []).filter(function(l){
+    const st = String(l.status || '').trim();
+    return st !== 'Converted' && st !== 'Customer';
+  }).map(function(l){
+    const ll = String(l.latLong || '').replace(/\s+/g, '');
+    if(!isValidLatLong_(ll)) return null;
+    const p = ll.split(',');
+    return {
+      isLead: true, leadId: l.leadId, customerName: l.name || '', mobile: l.phoneNo || '',
+      area: l.area || '', address: l.address || '', status: l.status || '',
+      latLong: ll, lat: Number(p[0]), lng: Number(p[1]),
+      lastNote: l.lastNote || '', lastActivityDate: l.lastActivityDate || ''
+    };
+  }).filter(Boolean);
+}
+
+function svLeadPopupHtml_(c){
+  const note = String(c.lastNote || '');
+  return '<div class="sv-popup">' +
+    '<div class="sv-popup-title">'+esc(c.customerName)+'</div>' +
+    svPopupRow_('Phone', c.mobile||'—') +
+    svPopupRow_('Address', c.address||c.area||'—') +
+    svPopupRow_('Status', leadStatusLabel_(c.status)) +
+    svPopupRow_('Last Activity', c.lastActivityDate||'—') +
+    svPopupRow_('Last Note', note ? (note.length>80 ? note.substring(0,80)+'...' : note) : '—') +
+    '<div class="sv-popup-actions">' +
+      '<button class="btn btn-secondary" style="flex:1" onclick="openLeadDetail_(\''+esc(c.leadId)+'\')">View Lead</button>' +
+      '<button class="btn btn-ghost" style="flex:1" onclick="openCustomerLocation_(\''+esc(c.latLong)+'\',\''+esc(c.address||'')+'\')">Directions</button>' +
+    '</div>' +
+  '</div>';
 }
 
 function svToggleLayer_(){
