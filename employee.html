@@ -104,6 +104,14 @@
     .mc-slider::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.25);}
     .mc-toggle input:checked + .mc-slider{background:var(--primary-accent);}
     .mc-toggle input:checked + .mc-slider::after{transform:translateX(16px);}
+    /* NEW: Advanced Filter - compact multi-select dropdowns (Customer Status / Tags) */
+    .mc-dd-wrap{position:relative;display:inline-block;max-width:100%;}
+    .mc-dd-btn{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:240px;max-width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);background:#fff;font-size:13px;cursor:pointer;text-align:left;}
+    .mc-dd-btn:hover{border-color:var(--primary-accent);}
+    .mc-dd-panel{position:absolute;left:0;top:calc(100% + 4px);z-index:60;min-width:270px;max-height:260px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);padding:6px;}
+    .mc-dd-tools{display:flex;gap:14px;padding:4px 8px 6px;font-size:12px;font-weight:600;border-bottom:1px solid var(--border);margin-bottom:4px;}
+    .mc-dd-item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;font-size:13px;cursor:pointer;}
+    .mc-dd-item:hover{background:var(--neutral-bg);}
     /* NEW: Assigned Leads table + Lead details */
     .lead-note-cell{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;color:var(--text-2);}
     .lead-link{cursor:pointer;color:var(--primary-accent);font-weight:600;}
@@ -324,7 +332,7 @@ let ETOKEN = sessionStorage.getItem('employee_token') || null;
 let EMP_NAME = sessionStorage.getItem('employee_name') || '';
 let MY_CUSTOMERS_CACHE = [];
 let MC_LOADED_ = false; // NEW - true after the first successful My Customers fetch
-let MC_ADV_ = { active:false, days:15, types:[], status:'has', statuses:[] }; // NEW - applied Advanced Filter (statuses: NEW)
+let MC_ADV_ = { active:false, days:15, types:[], status:'has', statuses:[], tags:[] }; // NEW - applied Advanced Filter (statuses, tags: NEW)
 const MC_ADV_TYPES_ = [['visit','Visit'],['sale','Sale'],['payment','Payment'],['order','Order']];
 let MC_LAST_LIST_ = [];   // NEW - the customer list currently shown (used by Share)
 let MC_SHARE_MSGS_ = [];  // NEW - prepared WhatsApp message parts
@@ -382,7 +390,7 @@ function employeeLogout(){
   MY_CUSTOMERS_CACHE = []; MC_LOADED_ = false; // NEW - next login fetches fresh once
   MC_LAST_LIST_ = []; MC_SHARE_MSGS_ = [];
   EMP_DASH_LOADED_ = false; ORDERS_LOADED_ = false; ATT_STATUS_LOADED_ = false; ATT_HIST_LOADED_ = false; // NEW
-  MC_ADV_ = { active:false, days:15, types:[], status:'has' };
+  MC_ADV_ = { active:false, days:15, types:[], status:'has', statuses:[], tags:[] };
   if(ATTENDANCE_TIMER_){ clearInterval(ATTENDANCE_TIMER_); ATTENDANCE_TIMER_ = null; }
   // NEW - Shop View cleanup so a stale map never leaks into the next login
   SHOP_VIEW_CACHE = []; SHOP_VIEW_LOADED_ = false; SV_MODE_ = 'customers';
@@ -1357,13 +1365,10 @@ function mcAdvPanelHtml_(){
         '<option value="has"'+(MC_ADV_.status==='has'?' selected':'')+'>Has Activity</option>' +
         '<option value="none"'+(MC_ADV_.status==='none'?' selected':'')+'>No Activity</option>' +
       '</select></div>' +
-    '<div style="margin-bottom:16px;"><label style="'+lbl+'">Customer Status (optional - select one or more, matches ANY)</label><div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-      CUSTOMER_STATUSES_.map(function(s){
-        const on = MC_ADV_.statuses.indexOf(s)>-1;
-        return '<label style="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border:1.5px solid var(--border);border-radius:999px;font-size:13px;font-weight:500;cursor:pointer;background:#fff;">' +
-          '<input type="checkbox" class="mcAdvStatusCb" value="'+esc(s)+'" '+(on?'checked':'')+'> '+esc(s)+'</label>';
-      }).join('') +
-    '</div></div>' +
+    // Customer Status: ONE compact dropdown, select one or more (matches ANY). Same checkbox class as before.
+    mcDdHtml_('mcAdvStatusDd', 'Customer Status', CUSTOMER_STATUSES_, MC_ADV_.statuses || [], 'mcAdvStatusCb', 'All statuses') +
+    // Tags: same dropdown logic (matches ANY of the selected tags)
+    mcDdHtml_('mcAdvTagDd', 'Tags', CUSTOMER_ALL_TAGS_, MC_ADV_.tags || [], 'mcAdvTagCb', 'All tags') +
     '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
       '<button class="btn btn-primary" style="width:auto;" onclick="applyMcAdvFilter_()">Search / Apply Filter</button>' +
       '<button class="btn btn-ghost" onclick="clearMcAdvFilter_()">Clear Filter</button>' +
@@ -1381,7 +1386,10 @@ function toggleMcAdvPanel_(){
 
 function mcAdvSummaryText_(){
   const names = MC_ADV_TYPES_.filter(function(t){ return MC_ADV_.types.indexOf(t[0])>-1; }).map(function(t){ return t[1]; }).join(', ');
-  return (MC_ADV_.status==='has' ? 'Has activity' : 'No activity') + ' &middot; ' + names + ' &middot; last ' + MC_ADV_.days + ' day' + (MC_ADV_.days===1?'':'s');
+  let s = (MC_ADV_.status==='has' ? 'Has activity' : 'No activity') + ' &middot; ' + names + ' &middot; last ' + MC_ADV_.days + ' day' + (MC_ADV_.days===1?'':'s');
+  if(MC_ADV_.statuses && MC_ADV_.statuses.length) s += ' &middot; Status: ' + esc(MC_ADV_.statuses.join(', '));   // NEW
+  if(MC_ADV_.tags && MC_ADV_.tags.length) s += ' &middot; Tags: ' + esc(MC_ADV_.tags.join(', '));               // NEW
+  return s;
 }
 
 function paintMcAdvBtn_(){
@@ -1407,20 +1415,23 @@ function applyMcAdvFilter_(){
   const days = parseInt(q('#mcAdvDays').value, 10);
   const types = Array.prototype.slice.call(document.querySelectorAll('.mcAdvCb:checked')).map(function(cb){ return cb.value; });
   const statuses = Array.prototype.slice.call(document.querySelectorAll('.mcAdvStatusCb:checked')).map(function(cb){ return cb.value; }); // NEW
+  const tags = Array.prototype.slice.call(document.querySelectorAll('.mcAdvTagCb:checked')).map(function(cb){ return cb.value; });       // NEW
   if(!days || days < 1){ showToast('Enter the number of days (1 or more).', 'err'); return; }
   if(!types.length){ showToast('Select at least one activity type.', 'err'); return; }
-  MC_ADV_ = { active:true, days:days, types:types, status:q('#mcAdvStatus').value, statuses:statuses };
+  MC_ADV_ = { active:true, days:days, types:types, status:q('#mcAdvStatus').value, statuses:statuses, tags:tags };
   q('#mcAdvPanel').classList.add('hidden');
   paintMcAdvBtn_();
   paintMyCustomers_();
 }
 
 function clearMcAdvFilter_(){
-  MC_ADV_ = { active:false, days:15, types:[], status:'has', statuses:[] };
+  MC_ADV_ = { active:false, days:15, types:[], status:'has', statuses:[], tags:[] };
   if(q('#mcAdvDays')) q('#mcAdvDays').value = 15;
   if(q('#mcAdvStatus')) q('#mcAdvStatus').value = 'has';
   document.querySelectorAll('.mcAdvCb').forEach(function(cb){ cb.checked = false; });
   document.querySelectorAll('.mcAdvStatusCb').forEach(function(cb){ cb.checked = false; }); // NEW
+  document.querySelectorAll('.mcAdvTagCb').forEach(function(cb){ cb.checked = false; });    // NEW
+  mcDdRefresh_('mcAdvStatusDd', 'mcAdvStatusCb'); mcDdRefresh_('mcAdvTagDd', 'mcAdvTagCb'); // NEW - dropdown buttons go back to "All ..."
   paintMcAdvBtn_();
   paintMyCustomers_();
 }
@@ -1434,8 +1445,56 @@ function mcAdvMatch_(c){
   const activityOk = MC_ADV_.status==='has' ? hasAny : !hasAny;
   // NEW: optional Customer Status narrowing (OR among selected statuses)
   if(MC_ADV_.statuses && MC_ADV_.statuses.length && MC_ADV_.statuses.indexOf(String(c.pipelineStatus||'').trim())===-1) return false;
+  // NEW: optional Tags narrowing (OR among selected tags - customer needs at least one of them)
+  if(MC_ADV_.tags && MC_ADV_.tags.length){
+    const ct = c.tags || [];
+    if(!MC_ADV_.tags.some(function(t){ return ct.indexOf(t) > -1; })) return false;
+  }
   return activityOk;
 }
+
+/* ---- NEW: compact multi-select dropdown (used for Customer Status + Tags in the Advanced Filter) ---- */
+function mcDdText_(arr, emptyText){
+  if(!arr || !arr.length) return emptyText;
+  return arr.length <= 2 ? arr.join(', ') : (arr.length + ' selected');
+}
+function mcDdHtml_(id, label, items, selected, cbClass, emptyText){
+  const lbl = 'display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:6px;';
+  return '<div style="margin-bottom:16px;"><label style="'+lbl+'">'+esc(label)+'</label>' +
+    '<div class="mc-dd-wrap">' +
+      '<button type="button" class="mc-dd-btn" onclick="toggleMcDd_(\''+id+'\')"><span id="'+id+'Text">'+esc(mcDdText_(selected, emptyText))+'</span><span style="font-size:10px;">&#9662;</span></button>' +
+      '<div class="mc-dd-panel hidden" id="'+id+'" data-empty="'+esc(emptyText)+'">' +
+        '<div class="mc-dd-tools"><a href="#" onclick="mcDdAll_(\''+id+'\',\''+cbClass+'\',true);return false;">Select all</a><a href="#" onclick="mcDdAll_(\''+id+'\',\''+cbClass+'\',false);return false;">Clear</a></div>' +
+        items.map(function(s){
+          const on = (selected||[]).indexOf(s) > -1;
+          return '<label class="mc-dd-item"><input type="checkbox" class="'+cbClass+'" value="'+esc(s)+'" '+(on?'checked':'')+' onchange="mcDdRefresh_(\''+id+'\',\''+cbClass+'\')"> '+esc(s)+'</label>';
+        }).join('') +
+      '</div>' +
+    '</div></div>';
+}
+function toggleMcDd_(id){
+  const p = q('#'+id); if(!p) return;
+  const wasHidden = p.classList.contains('hidden');
+  Array.prototype.forEach.call(document.querySelectorAll('.mc-dd-panel'), function(x){ x.classList.add('hidden'); });
+  if(wasHidden) p.classList.remove('hidden');
+}
+function mcDdRefresh_(id, cbClass){
+  const p = q('#'+id), t = q('#'+id+'Text'); if(!p || !t) return;
+  const vals = Array.prototype.map.call(p.querySelectorAll('.'+cbClass+':checked'), function(cb){ return cb.value; });
+  t.textContent = mcDdText_(vals, p.getAttribute('data-empty') || 'All');
+}
+function mcDdAll_(id, cbClass, on){
+  const p = q('#'+id); if(!p) return;
+  Array.prototype.forEach.call(p.querySelectorAll('.'+cbClass), function(cb){ cb.checked = on; });
+  mcDdRefresh_(id, cbClass);
+}
+document.addEventListener('click', function(e){
+  if(e.target.closest && e.target.closest('.mc-dd-wrap')) return;
+  Array.prototype.forEach.call(document.querySelectorAll('.mc-dd-panel'), function(p){ p.classList.add('hidden'); });
+});
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape') Array.prototype.forEach.call(document.querySelectorAll('.mc-dd-panel'), function(p){ p.classList.add('hidden'); });
+});
 
 /* ================= SHARE FILTERED CUSTOMER LIST (WhatsApp) ================= */
 
