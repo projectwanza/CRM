@@ -144,6 +144,14 @@
     .conv-badge{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#fdf2d8;color:#8a5a00;font-size:10.5px;font-weight:700;}
     .conv-history-card{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;}
     .conv-history-card:last-child{margin-bottom:0;}
+    /* NEW: Convert Lead - "Select Customer Details to Save" */
+    .conv-fields-title{font-size:13px;font-weight:700;margin:0 0 4px;}
+    .conv-fields-hint{font-size:11.5px;color:var(--text-2);margin:0 0 8px;}
+    .conv-field-row{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;}
+    .conv-field-row .cfr-label{font-weight:700;font-size:12.5px;margin-bottom:4px;}
+    .conv-field-row .cfr-lead{display:flex;align-items:flex-start;gap:7px;font-size:12.5px;cursor:pointer;word-break:break-word;}
+    .conv-field-row .cfr-lead.off{color:var(--text-3);cursor:default;}
+    .conv-field-row .cfr-cust{font-size:12.5px;color:var(--text-2);margin:3px 0 0 24px;word-break:break-word;}
 
     table{width:100%;border-collapse:collapse;font-size:13px;}
     thead th{text-align:left;padding:10px 12px;color:var(--text-3);font-weight:700;text-transform:uppercase;font-size:10.5px;border-bottom:1px solid var(--border);white-space:nowrap;}
@@ -857,6 +865,7 @@ function openLeadConvertModal_(leadId, leadName){
         '</div>' +
         '<div class="field"><label>Select Existing Customer *</label><input type="text" id="lcSearch" placeholder="Search customer by name / mobile / area..." oninput="onLcSearch_()"></div>' +
         '<div class="conv-cust-list" id="lcCustList"><div class="skeleton"></div></div>' +
+        '<div id="lcFieldsBox" class="hidden" style="margin-top:14px;"></div>' +
         '<div class="field" style="margin-top:12px;"><label>Remark (optional)</label><textarea id="lcRemark" rows="2" placeholder="e.g. Existing shop owner, same as CUS26...0049"></textarea></div>' +
       '</div>' +
       '<div class="modal-actions"><button class="btn btn-primary" id="lcSaveBtn" onclick="saveLeadConvert_()">Convert</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>' +
@@ -890,11 +899,55 @@ function selectLcCustomer_(customerId){
   LC_SELECTED_CID_ = customerId;
   Array.prototype.forEach.call(document.querySelectorAll('.conv-cust-row'), function(el){ el.classList.remove('selected'); });
   if(event && event.currentTarget) event.currentTarget.classList.add('selected');
+  loadLcCompare_();   // NEW - show Lead vs Customer values for the picked customer
+}
+
+/* ---- NEW: "Select Customer Details to Save" ---- */
+let LC_COMPARE_FOR_ = '';
+function lcShort_(v){ const s = String(v||''); return s.length > 60 ? s.substring(0,60)+'…' : s; }
+function lcTickAll_(on){
+  Array.prototype.forEach.call(document.querySelectorAll('.lcFieldCb:not(:disabled)'), function(cb){ cb.checked = on; });
+}
+function loadLcCompare_(){
+  const box = q('#lcFieldsBox'); if(!box) return;
+  const cid = LC_SELECTED_CID_, leadId = LC_LEAD_ID_;
+  LC_COMPARE_FOR_ = cid;
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="skeleton"></div>';
+  const saveBtn = q('#lcSaveBtn'); if(saveBtn) saveBtn.disabled = true;     // wait until the choices are on screen
+  const done = function(){ const b = q('#lcSaveBtn'); if(b) b.disabled = false; };
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(LC_COMPARE_FOR_ !== cid || !q('#lcFieldsBox')) return;             // customer changed / modal closed meanwhile
+      done();
+      if(!res || !res.success){ box.innerHTML = '<div class="empty-state">'+esc((res && res.message) || 'Could not load details.')+'</div>'; return; }
+      box.innerHTML =
+        '<div class="conv-fields-title">Select Customer Details to Save</div>' +
+        '<p class="conv-fields-hint">Ticked = the Lead value is saved onto the customer. Unticked = the customer keeps its current value. <a href="#" onclick="lcTickAll_(true);return false;">All</a> &middot; <a href="#" onclick="lcTickAll_(false);return false;">None</a></p>' +
+        (res.fields||[]).map(function(f){
+          const leadV = String(f.lead||''), custV = String(f.customer||'');
+          const same = !!leadV && leadV === custV;
+          const canTick = !!leadV && !same;
+          const checked = canTick && !custV;      // pre-ticked only when it fills an EMPTY customer field
+          const leadTxt = !f.leadHasField ? 'not available on leads' : (!leadV ? '—' : esc(lcShort_(leadV)));
+          return '<div class="conv-field-row"><div class="cfr-label">'+esc(f.label)+'</div>' +
+            '<label class="cfr-lead'+(canTick?'':' off')+'"><input type="checkbox" class="lcFieldCb" value="'+esc(f.key)+'"'+(checked?' checked':'')+(canTick?'':' disabled')+'> ' +
+              '<span title="'+esc(leadV)+'">Lead: '+leadTxt+(same?' <em>(same as customer)</em>':'')+'</span></label>' +
+            '<div class="cfr-cust" title="'+esc(custV)+'">Customer: '+(custV ? esc(lcShort_(custV)) : '—')+'</div></div>';
+        }).join('');
+    })
+    .withFailureHandler(function(){
+      if(LC_COMPARE_FOR_ !== cid || !q('#lcFieldsBox')) return;
+      done();
+      box.innerHTML = '<div class="empty-state">Could not load details. You can still convert without copying any fields.</div>';
+    })
+    .apiEmployeeGetConversionCompare(ETOKEN, leadId, cid);
 }
 function saveLeadConvert_(){
   if(!LC_SELECTED_CID_){ showToast('Please select a customer to convert this lead to.', 'err'); return; }
   const type = (document.querySelector('input[name="lcType"]:checked') || {}).value || 'Direct';
   const remark = q('#lcRemark').value.trim();
+  const fields = Array.prototype.map.call(document.querySelectorAll('.lcFieldCb:checked'), function(cb){ return cb.value; }); // NEW - ticked fields
   const leadId = LC_LEAD_ID_;
   const btn = q('#lcSaveBtn'); btn.disabled=true; btn.textContent='Converting...';
   google.script.run
@@ -903,13 +956,13 @@ function saveLeadConvert_(){
       if(res && res.success){
         const cur = findLeadInCache_(leadId); if(cur) cur.status = 'Converted';
         delete LEAD_DETAIL_CACHE_[leadId];
-        showToast('Lead converted.', 'ok');
+        showToast(res.updatedFields ? ('Lead converted. '+res.updatedFields+' detail'+(res.updatedFields===1?'':'s')+' saved to customer.') : 'Lead converted.', 'ok');
         closeModal();
         paintMyLeads_();
       } else { showToast((res && res.message) || 'Failed to convert lead.', 'err'); }
     })
     .withFailureHandler(function(){ btn.disabled=false; btn.textContent='Convert'; showToast('Failed to convert lead.', 'err'); })
-    .apiEmployeeConvertLead(ETOKEN, leadId, LC_SELECTED_CID_, type, remark);
+    .apiEmployeeConvertLead(ETOKEN, leadId, LC_SELECTED_CID_, type, remark, fields);
 }
 
 document.addEventListener('click', function(e){ const m = q('#leadStatusMenu'); if(m && !m.contains(e.target)) closeLeadStatusMenu_(); });
